@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nyx</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#06070a;
+  --panel:#0f1218;
+  --panel-2:#131824;
+  --border:#202839;
+  --border-soft:#182030;
+  --text:#96a2b8;
+  --bright:#eef3ff;
+  --dim:#63708a;
+  --accent:#4ade80;
+  --accent-soft:rgba(74,222,128,.14);
+  --warn:#f59e0b;
+  --danger:#fb7185;
+  --chip:#1a2232;
+  --shadow:0 20px 60px rgba(0,0,0,.35);
+}
+html,body{min-height:100%;background:radial-gradient(circle at top,#101522 0,#08090d 46%,#050608 100%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}
+body{padding:18px}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:#273246;border-radius:999px}
+button,input{font:inherit}
+button{cursor:pointer}
+
+.shell{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(320px,.9fr);gap:18px;max-width:1280px;margin:0 auto;min-height:calc(100vh - 36px)}
+.panel{background:linear-gradient(180deg,rgba(16,20,29,.98),rgba(10,13,19,.98));border:1px solid var(--border);border-radius:24px;box-shadow:var(--shadow);min-height:0}
+.chat-panel{display:flex;flex-direction:column;overflow:hidden}
+.ops-panel{display:flex;flex-direction:column;padding:18px;gap:16px;overflow:hidden}
+
+.hdr{padding:16px 18px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:12px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.hdr h1{font-size:16px;color:var(--bright);font-weight:700;letter-spacing:.16em}
+.dot{width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 6px rgba(74,222,128,.12)}
+.dot.off{background:var(--danger);box-shadow:0 0 0 6px rgba(251,113,133,.12)}
+.header-meta{margin-left:auto;display:flex;align-items:center;gap:12px;color:var(--dim);font-size:12px;white-space:nowrap}
+.ops-link{border:1px solid var(--border);background:var(--panel-2);color:var(--bright);padding:8px 11px;border-radius:999px}
+
+.msgs{flex:1;overflow-y:auto;padding:18px 18px 10px}
+.msg{position:relative;max-width:82%;margin-bottom:12px;padding:12px 14px 18px;border-radius:16px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word}
+.msg.user{background:#1d2533;color:#dce4f7;margin-left:auto;border-bottom-right-radius:5px}
+.msg.assistant{background:rgba(16,19,28,.95);border:1px solid var(--border);color:var(--bright);border-bottom-left-radius:5px}
+.msg.system{background:transparent;border:1px dashed #24432e;color:#7ee2a4;font-size:12px;margin:10px auto;max-width:92%;text-align:center;padding-bottom:12px}
+.msg.system.structured{text-align:left;margin:10px 0 12px}
+.msg-time{position:absolute;right:12px;bottom:6px;font-size:11px;color:var(--dim)}
+
+.typing{padding:0 18px 10px;color:var(--dim);font-size:12px;display:none}
+.input{display:flex;gap:10px;padding:14px 18px 18px;border-top:1px solid var(--border-soft)}
+.input input{flex:1;background:#0a0e14;border:1px solid var(--border);border-radius:14px;padding:12px 14px;color:var(--bright);outline:none}
+.input input:focus{border-color:#3b4660;box-shadow:0 0 0 4px rgba(91,111,151,.14)}
+.input button{background:linear-gradient(180deg,#1f2839,#171e2c);color:var(--bright);border:1px solid #2a354c;border-radius:14px;padding:12px 18px}
+.input button:disabled{opacity:.45;cursor:default}
+
+.ops-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ops-title h2{color:var(--bright);font-size:18px;font-weight:700}
+.ops-title p{color:var(--dim);font-size:12px;margin-top:4px}
+.ops-actions{display:flex;gap:8px}
+.ops-actions button{border:1px solid var(--border);background:var(--panel-2);color:var(--bright);padding:9px 12px;border-radius:12px}
+
+.token-card,.section{background:rgba(14,19,28,.84);border:1px solid var(--border-soft);border-radius:18px}
+.token-card{padding:14px;display:flex;flex-direction:column;gap:10px}
+.token-card label,.section-head .eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.token-row{display:flex;gap:8px}
+.token-row input{flex:1;background:#0b1017;border:1px solid var(--border);border-radius:12px;padding:10px 12px;color:var(--bright);outline:none}
+.token-row button{border:1px solid var(--border);background:var(--chip);color:var(--bright);padding:10px 13px;border-radius:12px}
+.token-note{font-size:12px;color:var(--dim)}
+
+.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.stat-card{padding:14px;border-radius:16px;background:linear-gradient(180deg,rgba(25,32,45,.8),rgba(13,17,25,.8));border:1px solid var(--border-soft)}
+.stat-card .k{display:block;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:7px}
+.stat-card .v{display:block;color:var(--bright);font-size:24px;font-weight:700;line-height:1}
+.stat-card .s{display:block;color:var(--dim);font-size:12px;margin-top:7px}
+
+.section{display:flex;flex-direction:column;min-height:0}
+.section-head{padding:14px 14px 10px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.section-head h3{font-size:15px;color:var(--bright);font-weight:700}
+.filter-row{display:flex;gap:8px;flex-wrap:wrap}
+.filter-chip{border:1px solid var(--border);background:var(--chip);color:var(--text);padding:7px 10px;border-radius:999px;font-size:12px}
+.filter-chip.active{background:var(--accent-soft);border-color:rgba(74,222,128,.35);color:#c9f8d8}
+
+.event-list{padding:10px 10px 12px;display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:190px;max-height:320px}
+.event-card{padding:13px;border-radius:16px;border:1px solid var(--border-soft);background:linear-gradient(180deg,rgba(23,30,43,.88),rgba(13,17,24,.88));display:flex;flex-direction:column;gap:8px;cursor:pointer;transition:.16s ease}
+.event-card:hover{transform:translateY(-1px);border-color:#324055}
+.event-card.active{border-color:#4a7b67;box-shadow:inset 0 0 0 1px rgba(74,222,128,.18)}
+.event-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:var(--chip);color:var(--bright);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.badge.good{background:rgba(74,222,128,.14);color:#b6f5cb}
+.badge.warn{background:rgba(245,158,11,.14);color:#f9cd79}
+.event-time{font-size:11px;color:var(--dim)}
+.event-summary{color:var(--bright);line-height:1.45}
+.event-target{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#bac6db}
+.event-meta{display:flex;flex-wrap:wrap;gap:6px}
+.mini-chip{padding:4px 8px;border-radius:999px;background:#111827;border:1px solid #253044;color:#9eb0cf;font-size:11px}
+.trace-response{color:var(--dim);font-size:12px;line-height:1.45}
+
+.detail-wrap{padding:12px 14px 16px;overflow:auto;min-height:240px}
+.detail-empty{display:flex;align-items:center;justify-content:center;min-height:220px;border:1px dashed #253148;border-radius:16px;color:var(--dim);text-align:center;padding:18px}
+.detail-stack{display:flex;flex-direction:column;gap:14px}
+.detail-card{padding:14px;border-radius:16px;background:linear-gradient(180deg,rgba(21,28,40,.9),rgba(12,16,24,.9));border:1px solid var(--border-soft)}
+.detail-card h4{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:10px}
+.detail-card p,.detail-card li{line-height:1.5}
+.detail-card strong{color:var(--bright)}
+.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.detail-kv{display:flex;flex-direction:column;gap:4px}
+.detail-kv span{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+.detail-kv code,.detail-card code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#dbe7ff;background:#0c121b;padding:2px 6px;border-radius:8px}
+.lane-list{display:flex;flex-direction:column;gap:8px;list-style:none}
+.lane-item{padding:11px 12px;border-radius:14px;background:#0d131c;border:1px solid #20283a}
+.lane-item .lane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--bright);margin-bottom:4px}
+.lane-item .lane-route{font-size:11px;color:var(--accent)}
+.preview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.preview-box{padding:12px;border-radius:14px;background:#0c121b;border:1px solid #222d40;overflow:auto}
+.preview-box pre{white-space:pre-wrap;word-break:break-word;color:#dbe7ff;font-size:12px}
+.ops-error{padding:12px 14px;border-radius:14px;background:rgba(251,113,133,.12);border:1px solid rgba(251,113,133,.2);color:#ffc0cd;font-size:13px}
+.hidden{display:none!important}
+
+@media(max-width:1040px){
+  .shell{grid-template-columns:1fr;min-height:auto}
+  .ops-panel{min-height:unset}
+}
+@media(max-width:680px){
+  body{padding:10px}
+  .shell{gap:12px;min-height:calc(100vh - 20px)}
+  .hdr,.msgs,.input,.ops-panel{padding-left:14px;padding-right:14px}
+  .summary-grid,.detail-grid,.preview-grid{grid-template-columns:1fr}
+  .msg{max-width:92%}
+  .token-row,.ops-top,.section-head{flex-direction:column;align-items:stretch}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <section class="panel chat-panel">
+    <header class="hdr">
+      <div class="brand">
+        <span class="dot" id="dot"></span>
+        <h1>NYX</h1>
+      </div>
+      <div class="header-meta">
+        <span id="stats">--</span>
+        <button class="ops-link" id="jump-ops" type="button">operations</button>
+      </div>
+    </header>
+    <div class="msgs" id="msgs"></div>
+    <div class="typing" id="typing">nyx is thinking...</div>
+    <div class="input">
+      <input id="in" placeholder="talk to nyx..." autocomplete="off">
+      <button id="btn" type="button">send</button>
+    </div>
+  </section>
+
+  <aside class="panel ops-panel" id="ops-panel">
+    <div class="ops-top">
+      <div class="ops-title">
+        <h2>Operations</h2>
+        <p>Recent forge activity, growth traces, and runtime control signals.</p>
+      </div>
+      <div class="ops-actions">
+        <button id="ops-refresh" type="button">refresh</button>
+      </div>
+    </div>
+
+    <div class="token-card">
+      <label for="token">API token</label>
+      <div class="token-row">
+        <input id="token" type="password" placeholder="optional bearer token for secured endpoints">
+        <button id="token-save" type="button">apply</button>
+      </div>
+      <div class="token-note" id="token-note">Stored only in this browser. Leave empty when Nyx runs without `NYX_API_TOKEN`.</div>
+    </div>
+
+    <div class="summary-grid">
+      <div class="stat-card">
+        <span class="k">Ready tasks</span>
+        <span class="v" id="ops-ready">--</span>
+        <span class="s" id="ops-ready-note">autonomy queue</span>
+      </div>
+      <div class="stat-card">
+        <span class="k">Running</span>
+        <span class="v" id="ops-running">--</span>
+        <span class="s" id="ops-running-note">live tasks</span>
+      </div>
+      <div class="stat-card">
+        <span class="k">Stale recoveries</span>
+        <span class="v" id="ops-recoveries">--</span>
+        <span class="s" id="ops-recoveries-note">recent repair actions</span>
+      </div>
+      <div class="stat-card">
+        <span class="k">Growth events</span>
+        <span class="v" id="ops-growth">--</span>
+        <span class="s" id="ops-growth-note">forge and runtime changes</span>
+      </div>
+    </div>
+
+    <div class="ops-error hidden" id="ops-error"></div>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Browser</div>
+          <h3>Open sessions</h3>
+        </div>
+        <div class="filter-row">
+          <button class="filter-chip" type="button" id="browser-sessions-refresh">refresh</button>
+        </div>
+      </div>
+      <div class="event-list" id="browser-sessions-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">World state</div>
+          <h3>Project momentum</h3>
+        </div>
+      </div>
+      <div class="detail-wrap" id="world-state"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Self-model</div>
+          <h3>Recent drift</h3>
+        </div>
+      </div>
+      <div class="detail-wrap" id="self-model-diff"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Chat execution</div>
+          <h3>Recent traces</h3>
+        </div>
+        <div class="filter-row" id="chat-filters">
+          <button class="filter-chip active" type="button" data-chat-route="all">all</button>
+          <button class="filter-chip" type="button" data-chat-route="chat_llm">llm</button>
+          <button class="filter-chip" type="button" data-chat-route="response_cache">cache</button>
+          <button class="filter-chip" type="button" data-chat-route="rule_fast_path">fast path</button>
+        </div>
+      </div>
+      <div class="event-list" id="chat-trace-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Selected trace</div>
+          <h3>Chat trace detail</h3>
+        </div>
+      </div>
+      <div class="detail-wrap" id="chat-trace-detail"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Autonomy</div>
+          <h3>Recent action runs</h3>
+        </div>
+      </div>
+      <div class="event-list" id="autonomy-run-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Causality</div>
+          <h3>Task and run trace</h3>
+        </div>
+      </div>
+      <div class="detail-wrap" id="autonomy-detail"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Recent activity</div>
+          <h3>Forge growth</h3>
+        </div>
+        <div class="filter-row" id="growth-filters">
+          <button class="filter-chip active" type="button" data-growth-filter="all">all</button>
+          <button class="filter-chip" type="button" data-growth-filter="tool_growth_result">tool growth</button>
+          <button class="filter-chip" type="button" data-growth-filter="self_edit_result">self edit</button>
+        </div>
+      </div>
+      <div class="event-list" id="growth-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Selected event</div>
+          <h3>Lane trace</h3>
+        </div>
+      </div>
+      <div class="detail-wrap" id="growth-detail"></div>
+    </section>
+  </aside>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const $$=s=>Array.from(document.querySelectorAll(s));
+const msgs=[];
+const opsState={
+  token:localStorage.getItem('nyx_api_token')||'',
+  growthFilter:'all',
+  chatRouteFilter:'all',
+  overview:null,
+  worldProjects:null,
+  worldChanges:null,
+  selfModelDiff:null,
+  chatTraces:[],
+  selectedChatTraceId:null,
+  recentActionRuns:[],
+  selectedActionRunId:null,
+  selectedActionRunTrace:null,
+  selectedTaskTrace:null,
+  autonomyTraceLoading:false,
+  autonomyTraceError:'',
+  autonomyTraceRequestKey:'',
+  growthEvents:[],
+  selectedGrowthId:null,
+  error:'',
+};
+
+$('#token').value=opsState.token;
+
+function escapeHtml(v){
+  return String(v??'').replace(/[&<>"']/g,ch=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+
+function compactText(value,max=140){
+  const text=String(value??'').replace(/\s+/g,' ').trim();
+  if(text.length<=max)return text;
+  return `${text.slice(0,Math.max(0,max-1)).trimEnd()}...`;
+}
+
+function titleize(value){
+  return String(value??'').replace(/_/g,' ');
+}
+
+function displayText(value,fallback='n/a'){
+  const text=String(value??'').trim();
+  return text||fallback;
+}
+
+function hasContent(value){
+  if(value===null||value===undefined)return false;
+  if(Array.isArray(value))return value.length>0;
+  if(typeof value==='object')return Object.keys(value).length>0;
+  if(typeof value==='string')return value.trim().length>0;
+  return true;
+}
+
+function badgeTone(value=''){
+  const text=String(value).toLowerCase();
+  if(text.includes('completed')||text.includes('success')||text.includes('cache_hit')||text.includes('recovered'))return'good';
+  if(text.includes('failed')||text.includes('retry')||text.includes('quarantined')||text.includes('blocked')||text.includes('stale'))return'warn';
+  return'';
+}
+
+function worldChangeTone(value=''){
+  const text=String(value).toLowerCase();
+  if(text.includes('clear')||text.includes('resolve')||text.includes('remove'))return'good';
+  if(text.includes('open')||text.includes('block')||text.includes('stale')||text.includes('add'))return'warn';
+  return'';
+}
+
+function fmtTime(t){
+  if(!t)return'';
+  try{
+    const hasZone=/[zZ]|[+-]\d\d:?\d\d$/.test(t);
+    const d=new Date(hasZone?t:`${t.replace(' ','T')}Z`);
+    if(isNaN(d))return'';
+    const now=new Date();
+    const diff=now-d;
+    if(diff<60000)return'just now';
+    if(diff<3600000)return`${Math.floor(diff/60000)}m ago`;
+    if(diff<86400000&&d.getDate()===now.getDate())return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    return `${d.toLocaleDateString([],{month:'short',day:'numeric'})} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;
+  }catch{return''}
+}
+
+function authHeaders(headers={}){
+  const merged={...headers};
+  if(opsState.token.trim())merged.Authorization=`Bearer ${opsState.token.trim()}`;
+  return merged;
+}
+
+async function api(path,options={}){
+  try{
+    const response=await fetch(path,{...options,headers:authHeaders(options.headers||{})});
+    const payload=await response.json().catch(()=>null);
+    if(!response.ok)return{error:payload?.error||`http ${response.status}`,status:response.status};
+    return payload;
+  }catch{
+    return null;
+  }
+}
+
+function render(){
+  $('#msgs').innerHTML=msgs.map(m=>{
+    const c=m.role==='user'?'user':m.role==='system'?'system':'assistant';
+    const structured=m.role==='system'&&/\n/.test(String(m.content??''))?' structured':'';
+    const ts=m.time?`<div class="msg-time">${escapeHtml(fmtTime(m.time))}</div>`:'';
+    return`<div class="msg ${c}${structured}">${escapeHtml(m.content)}${ts}</div>`;
+  }).join('');
+  $('#msgs').scrollTop=$('#msgs').scrollHeight;
+}
+
+async function loadHistory(){
+  const d=await api('/api/history');
+  if(d&&Array.isArray(d.messages)&&d.messages.length>0){
+    d.messages.forEach(m=>msgs.push(m));
+    render();
+  }
+}
+
+async function send(){
+  const i=$('#in');
+  const text=i.value.trim();
+  if(!text)return;
+  i.value='';
+  msgs.push({role:'user',content:text,time:new Date().toISOString()});
+  render();
+  $('#btn').disabled=true;
+  $('#typing').style.display='block';
+  const d=await api('/api/chat',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message:text,user:'web'})
+  });
+  $('#typing').style.display='none';
+  if(d?.error&&d.status===401){
+    msgs.push({role:'system',content:'chat is locked. add your API token in operations to continue.',time:new Date().toISOString()});
+  }else{
+    msgs.push({role:'assistant',content:d?.response||d?.error||'connection failed',time:new Date().toISOString()});
+  }
+  render();
+  $('#btn').disabled=false;
+  i.focus();
+  loadOps();
+}
+
+async function pollStats(){
+  const d=await api('/api/stats');
+  if(!d||d.error){
+    $('#dot').className='dot off';
+    $('#stats').textContent=d?.status===401?'auth needed':'offline';
+    return;
+  }
+  $('#dot').className='dot';
+  const uptime=d.uptime_s>3600?`${Math.floor(d.uptime_s/3600)}h`:`${Math.floor(d.uptime_s/60)}m`;
+  $('#stats').textContent=`${d.memories} mem · ${d.messages} msg · $${d.cost_usd} · ${uptime}`;
+}
+
+async function pollProactive(){
+  const d=await api('/api/proactive');
+  if(d&&Array.isArray(d.messages)&&d.messages.length>0){
+    d.messages.forEach(m=>msgs.push({role:'system',content:m,time:new Date().toISOString()}));
+    render();
+  }
+}
+
+function setOpsError(message=''){
+  opsState.error=message;
+  const node=$('#ops-error');
+  if(message){
+    node.textContent=message;
+    node.classList.remove('hidden');
+  }else{
+    node.textContent='';
+    node.classList.add('hidden');
+  }
+}
+
+function renderOpsSummary(){
+  const counts=opsState.overview?.counts||{};
+  $('#ops-ready').textContent=counts.ready_tasks??'--';
+  $('#ops-running').textContent=counts.running_tasks??'--';
+  $('#ops-recoveries').textContent=counts.recent_stale_recoveries??'--';
+  $('#ops-growth').textContent=counts.recent_growth_events??'--';
+  $('#ops-ready-note').textContent=`${counts.active_goals??'--'} active goals`;
+  $('#ops-running-note').textContent=`${counts.stale_running_tasks??'--'} stale running`;
+  $('#ops-recoveries-note').textContent=`${counts.unhealthy_built_tools??'--'} unhealthy built tools`;
+  $('#ops-growth-note').textContent=`${opsState.growthEvents.length||0} shown in list`;
+}
+
+function deriveWorldFocus(snapshot){
+  const activeProject=Array.isArray(snapshot?.projects)&&snapshot.projects.length?snapshot.projects[0]:null;
+  const resumeFocus=Array.isArray(snapshot?.resume_queue)&&snapshot.resume_queue.length?snapshot.resume_queue[0]:null;
+  const workstreams=Array.isArray(activeProject?.workstreams)?activeProject.workstreams:[];
+  let activeWorkstream=null;
+
+  if(resumeFocus){
+    if(resumeFocus.goal_id!==null&&resumeFocus.goal_id!==undefined){
+      activeWorkstream=workstreams.find(workstream=>workstream.goal_id===resumeFocus.goal_id)||null;
+    }else{
+      activeWorkstream=workstreams.find(workstream=>workstream.id==='workstream:unassigned')||null;
+    }
+  }
+
+  if(!activeWorkstream){
+    activeWorkstream=workstreams[0]||null;
+  }
+
+  return{
+    active_project_title:activeProject?.title||null,
+    active_project_status:activeProject?.status||null,
+    active_workstream_title:activeWorkstream?.title||resumeFocus?.goal_title||null,
+    active_workstream_status:activeWorkstream?.status||null,
+    resume_focus_title:resumeFocus?.title||null,
+    resume_focus_kind:resumeFocus?.kind||null,
+    resume_focus_status:resumeFocus?.status||null,
+    resume_focus_reason:resumeFocus?.resume_reason||null,
+    resume_focus_blocker_count:Array.isArray(resumeFocus?.blocked_by)
+      ?resumeFocus.blocked_by.length
+      :(Array.isArray(activeWorkstream?.blockers)?activeWorkstream.blockers.length:0),
+    blocker_count:Array.isArray(snapshot?.blockers)?snapshot.blockers.length:0,
+    top_blocker_summary:snapshot?.blockers?.[0]?.summary||null,
+  };
+}
+
+function worldFocusLabel(focus){
+  if(!focus)return'idle';
+  return focus.resume_focus_title||focus.active_workstream_title||focus.active_project_title||'idle';
+}
+
+function worldFocusEmpty(focus){
+  return !focus||(
+    !focus.active_project_title
+    && !focus.active_workstream_title
+    && !focus.resume_focus_title
+    && Number(focus.blocker_count||0)===0
+    && !focus.top_blocker_summary
+  );
+}
+
+function renderWorldFocusBox(label,focus){
+  if(worldFocusEmpty(focus)){
+    return `
+      <div class="preview-box">
+        <strong>${escapeHtml(label)}</strong>
+        <p style="margin-top:10px">No active focus.</p>
+      </div>`;
+  }
+
+  const chips=[
+    focus.active_project_status?`project ${titleize(focus.active_project_status)}`:'',
+    focus.active_workstream_status?`workstream ${titleize(focus.active_workstream_status)}`:'',
+    focus.resume_focus_status?`task ${titleize(focus.resume_focus_status)}`:'',
+    focus.resume_focus_kind?titleize(focus.resume_focus_kind):'',
+    `${Number(focus.resume_focus_blocker_count||0)} local blockers`,
+    `${Number(focus.blocker_count||0)} total blockers`,
+  ].filter(Boolean);
+
+  return `
+    <div class="preview-box">
+      <strong>${escapeHtml(label)}</strong>
+      <p style="margin-top:10px;color:var(--bright)">${escapeHtml(worldFocusLabel(focus))}</p>
+      <div class="detail-grid" style="margin-top:10px">
+        <div class="detail-kv"><span>project</span><code>${escapeHtml(displayText(focus.active_project_title,'idle'))}</code></div>
+        <div class="detail-kv"><span>workstream</span><code>${escapeHtml(displayText(focus.active_workstream_title,'idle'))}</code></div>
+        <div class="detail-kv"><span>resume focus</span><code>${escapeHtml(displayText(focus.resume_focus_title,'idle'))}</code></div>
+        <div class="detail-kv"><span>reason</span><code>${escapeHtml(displayText(focus.resume_focus_reason,'steady'))}</code></div>
+      </div>
+      <div class="event-meta" style="margin-top:10px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+      ${focus.top_blocker_summary?`<p style="margin-top:10px">${escapeHtml(focus.top_blocker_summary)}</p>`:''}
+    </div>`;
+}
+
+function renderWorldState(){
+  const node=$('#world-state');
+  const snapshot=opsState.worldProjects;
+  if(opsState.error&&!snapshot){
+    node.innerHTML='<div class="detail-empty">Connect the control plane to inspect the live project graph and changes since the last snapshot.</div>';
+    return;
+  }
+  if(!snapshot){
+    node.innerHTML='<div class="detail-empty">World state has not been loaded yet.</div>';
+    return;
+  }
+
+  const changes=opsState.worldChanges||snapshot.changes||null;
+  const currentFocus=changes?.focus_shift?.current||deriveWorldFocus(snapshot);
+  const previousFocus=changes?.focus_shift?.previous||null;
+  const summary=Array.isArray(changes?.summary)?changes.summary:[];
+  const countChanges=Array.isArray(changes?.count_changes)?changes.count_changes:[];
+  const workstreamChanges=Array.isArray(changes?.workstream_changes)?changes.workstream_changes:[];
+  const blockerChanges=Array.isArray(changes?.blocker_changes)?changes.blocker_changes:[];
+  const resumeChanges=Array.isArray(changes?.resume_changes)?changes.resume_changes:[];
+  const resumeQueue=Array.isArray(snapshot.resume_queue)?snapshot.resume_queue.slice(0,4):[];
+  const blockers=Array.isArray(snapshot.blockers)?snapshot.blockers.slice(0,4):[];
+  const project=Array.isArray(snapshot.projects)&&snapshot.projects.length?snapshot.projects[0]:null;
+  const projectWorkstreams=Array.isArray(project?.workstreams)?project.workstreams.slice(0,4):[];
+  const overviewCard=`
+    <div class="detail-card">
+      <h4>Overview</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>active project</span><code>${escapeHtml(displayText(currentFocus.active_project_title,'idle'))}</code></div>
+        <div class="detail-kv"><span>current focus</span><code>${escapeHtml(worldFocusLabel(currentFocus))}</code></div>
+        <div class="detail-kv"><span>compared at</span><code>${escapeHtml(displayText(changes?.compared_at,snapshot.compiled_at||'n/a'))}</code></div>
+        <div class="detail-kv"><span>snapshot source</span><code>${escapeHtml(displayText(snapshot.source||changes?.current?.source,'unknown'))}</code></div>
+        <div class="detail-kv"><span>changes detected</span><code>${escapeHtml(String(Boolean(changes?.changed)))}</code></div>
+        <div class="detail-kv"><span>resume items</span><code>${escapeHtml(String(snapshot.counts?.resume_queue??0))}</code></div>
+        <div class="detail-kv"><span>open blockers</span><code>${escapeHtml(String(snapshot.counts?.blockers??0))}</code></div>
+        <div class="detail-kv"><span>ready tasks</span><code>${escapeHtml(String(snapshot.counts?.ready_tasks??0))}</code></div>
+      </div>
+      ${summary.length?`<ul class="lane-list" style="margin-top:12px">${summary.map(item=>`<li class="lane-item">${escapeHtml(item)}</li>`).join('')}</ul>`:'<p style="margin-top:12px">No world-state movement was detected on the latest compile.</p>'}
+    </div>`;
+  const focusShiftCard=`
+    <div class="detail-card">
+      <h4>Focus shift</h4>
+      ${changes?.focus_shift?.summary?`<p>${escapeHtml(changes.focus_shift.summary)}</p>`:'<p>Current focus is stable.</p>'}
+      <div class="preview-grid" style="margin-top:12px">
+        ${renderWorldFocusBox('Previous',previousFocus)}
+        ${renderWorldFocusBox('Current',currentFocus)}
+      </div>
+    </div>`;
+  const snapshotCard=`
+    <div class="detail-card">
+      <h4>Snapshot markers</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>previous compile</span><code>${escapeHtml(displayText(changes?.previous?.compiled_at,'n/a'))}</code></div>
+        <div class="detail-kv"><span>previous source</span><code>${escapeHtml(displayText(changes?.previous?.source,'n/a'))}</code></div>
+        <div class="detail-kv"><span>current compile</span><code>${escapeHtml(displayText(changes?.current?.compiled_at,snapshot.compiled_at||'n/a'))}</code></div>
+        <div class="detail-kv"><span>current source</span><code>${escapeHtml(displayText(changes?.current?.source,snapshot.source||'n/a'))}</code></div>
+        <div class="detail-kv"><span>state key</span><code>${escapeHtml(displayText(snapshot.state_key,'n/a'))}</code></div>
+        <div class="detail-kv"><span>change key</span><code>${escapeHtml(displayText(snapshot.changes_state_key,'n/a'))}</code></div>
+      </div>
+      ${snapshot.compile_error?`<p style="margin-top:12px"><strong>Compile fallback:</strong> ${escapeHtml(snapshot.compile_error)}</p>`:''}
+      ${snapshot.used_persisted_snapshot?'<p style="margin-top:8px">Serving the last persisted graph because live compilation fell back.</p>':''}
+    </div>`;
+  const countCard=countChanges.length?`
+    <div class="detail-card">
+      <h4>Count changes</h4>
+      <ul class="lane-list">${countChanges.slice(0,8).map(change=>`
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(titleize(change.field||'count'))}</strong>
+            <span class="mini-chip">delta ${escapeHtml(String(change.delta>0?`+${change.delta}`:change.delta))}</span>
+          </div>
+          <div>${escapeHtml(String(change.from))} -> ${escapeHtml(String(change.to))}</div>
+        </li>`).join('')}</ul>
+    </div>`:'';
+  const blockerCard=blockerChanges.length?`
+    <div class="detail-card">
+      <h4>Blocker movement</h4>
+      <ul class="lane-list">${blockerChanges.slice(0,6).map(change=>{
+        const chips=[
+          titleize(change.kind||'blocker'),
+          change.target?`target ${change.target}`:'',
+          change.from_status||change.to_status?`${displayText(change.from_status,'n/a')} -> ${displayText(change.to_status,'n/a')}`:'',
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(compactText(change.summary||change.id||'blocker change',110))}</strong>
+            <span class="badge ${worldChangeTone(change.change)}">${escapeHtml(titleize(change.change||'updated'))}</span>
+          </div>
+          <div>${escapeHtml(change.id||'')}</div>
+          ${chips.length?`<div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>`:''}
+        </li>`;
+      }).join('')}</ul>
+    </div>`:'';
+  const resumeCard=resumeChanges.length?`
+    <div class="detail-card">
+      <h4>Resume lane changes</h4>
+      <ul class="lane-list">${resumeChanges.slice(0,6).map(change=>{
+        const chips=[
+          titleize(change.kind||'task'),
+          change.goal_title?`goal ${change.goal_title}`:'',
+          change.from_status||change.to_status?`${displayText(change.from_status,'n/a')} -> ${displayText(change.to_status,'n/a')}`:'',
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(compactText(change.title||`task ${change.task_id}`,100))}</strong>
+            <span class="badge ${worldChangeTone(change.change)}">${escapeHtml(titleize(change.change||'updated'))}</span>
+          </div>
+          <div>${escapeHtml(change.summary||'')}</div>
+          ${chips.length?`<div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>`:''}
+        </li>`;
+      }).join('')}</ul>
+    </div>`:'';
+  const workstreamCard=workstreamChanges.length?`
+    <div class="detail-card">
+      <h4>Workstream changes</h4>
+      <ul class="lane-list">${workstreamChanges.slice(0,6).map(change=>{
+        const chips=[
+          change.from_status||change.to_status?`${displayText(change.from_status,'n/a')} -> ${displayText(change.to_status,'n/a')}`:'',
+          `ready ${change.ready_from} -> ${change.ready_to}`,
+          `running ${change.running_from} -> ${change.running_to}`,
+          `blockers ${change.blocker_count_from} -> ${change.blocker_count_to}`,
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(change.title||change.id||'workstream')}</strong>
+            <span class="badge ${worldChangeTone(change.change)}">${escapeHtml(titleize(change.change||'updated'))}</span>
+          </div>
+          <div>${escapeHtml(change.summary||'')}</div>
+          <div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+        </li>`;
+      }).join('')}</ul>
+    </div>`:'';
+  const resumeQueueCard=`
+    <div class="detail-card">
+      <h4>Current resume queue</h4>
+      ${resumeQueue.length?`<ul class="lane-list">${resumeQueue.map(item=>{
+        const chips=[
+          titleize(item.kind||'task'),
+          titleize(item.status||'unknown'),
+          item.goal_title?`goal ${item.goal_title}`:'',
+          item.tool?`tool ${item.tool}`:'',
+          Array.isArray(item.blocked_by)&&item.blocked_by.length?`${item.blocked_by.length} blockers`:'clear',
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(compactText(item.title||`task ${item.task_id}`,100))}</strong>
+            <span class="lane-route">${escapeHtml(item.last_run_at||item.scheduled_for||'queued')}</span>
+          </div>
+          <div>${escapeHtml(item.resume_reason||item.latest_summary||'waiting for execution')}</div>
+          <div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+        </li>`;
+      }).join('')}</ul>`:'<p>No resume items are queued right now.</p>'}
+    </div>`;
+  const blockersCard=`
+    <div class="detail-card">
+      <h4>Open blockers now</h4>
+      ${blockers.length?`<ul class="lane-list">${blockers.map(blocker=>{
+        const chips=[
+          titleize(blocker.kind||'blocker'),
+          titleize(blocker.status||'open'),
+          blocker.target?`target ${blocker.target}`:'',
+          blocker.task_id!==null&&blocker.task_id!==undefined?`task ${blocker.task_id}`:'',
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(compactText(blocker.summary||blocker.id||'blocker',110))}</strong>
+            <span class="badge ${badgeTone(blocker.status||'blocked')}">${escapeHtml(titleize(blocker.status||'open'))}</span>
+          </div>
+          <div>${escapeHtml(blocker.source||'')}</div>
+          ${chips.length?`<div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>`:''}
+        </li>`;
+      }).join('')}</ul>`:'<p>No blockers are open in the latest snapshot.</p>'}
+    </div>`;
+  const workstreamSnapshotCard=projectWorkstreams.length?`
+    <div class="detail-card">
+      <h4>Current workstreams</h4>
+      <ul class="lane-list">${projectWorkstreams.map(workstream=>{
+        const chips=[
+          titleize(workstream.status||'unknown'),
+          `ready ${workstream.task_counts?.ready??0}`,
+          `running ${workstream.task_counts?.running??0}`,
+          Array.isArray(workstream.blockers)?`${workstream.blockers.length} blockers`:'0 blockers',
+        ].filter(Boolean);
+        return `
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(workstream.title||workstream.id||'workstream')}</strong>
+            <span class="lane-route">${escapeHtml(String(workstream.priority??''))}</span>
+          </div>
+          <div>${escapeHtml(workstream.summary||'')}</div>
+          <div class="event-meta" style="margin-top:8px">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+        </li>`;
+      }).join('')}</ul>
+    </div>`:'';
+
+  node.innerHTML=`
+    <div class="detail-stack">
+      ${overviewCard}
+      ${focusShiftCard}
+      ${snapshotCard}
+      ${countCard}
+      ${blockerCard}
+      ${resumeCard}
+      ${workstreamCard}
+      ${resumeQueueCard}
+      ${blockersCard}
+      ${workstreamSnapshotCard}
+    </div>`;
+}
+
+function renderSelfModelDiff(){
+  const node=$('#self-model-diff');
+  const payload=opsState.selfModelDiff;
+  if(opsState.error&&!payload){
+    node.innerHTML='<div class="detail-empty">Connect the control plane to inspect self-model drift over time.</div>';
+    return;
+  }
+  if(!payload){
+    node.innerHTML='<div class="detail-empty">Self-model diff has not been loaded yet.</div>';
+    return;
+  }
+  if(payload.available===false){
+    node.innerHTML=`<div class="detail-empty">${escapeHtml(payload.reason||'No self-model diff is available yet.')}</div>`;
+    return;
+  }
+
+  const changes=payload.changes||{};
+  const summary=Array.isArray(payload.summary)?payload.summary:[];
+  const identity=Array.isArray(changes.identity)?changes.identity:[];
+  const adaptation=Array.isArray(changes.adaptation)?changes.adaptation:[];
+  const runtime=Array.isArray(changes.runtime)?changes.runtime:[];
+  const providers=Array.isArray(changes.providers)?changes.providers:[];
+  const capabilities=changes.capabilities||{};
+  const constraints=changes.constraints||{};
+  const growthGoals=changes.growth_goals||{};
+  const recentEvents=changes.recent_events||{};
+  const from=payload.from||{};
+  const to=payload.to||{};
+
+  const changeList=(items,label)=>{
+    if(!Array.isArray(items)||!items.length)return'';
+    return `
+      <div class="detail-card">
+        <h4>${escapeHtml(label)}</h4>
+        <ul class="lane-list">${items.map(item=>`
+          <li class="lane-item">
+            <div class="lane-head">
+              <strong>${escapeHtml(titleize(item.field||'change'))}</strong>
+            </div>
+            <div>${escapeHtml(item.from||'n/a')} -> ${escapeHtml(item.to||'n/a')}</div>
+          </li>`).join('')}</ul>
+      </div>`;
+  };
+  const collectionCard=(label,change)=>{
+    const added=Array.isArray(change?.added)?change.added:[];
+    const removed=Array.isArray(change?.removed)?change.removed:[];
+    if(!added.length&&!removed.length)return'';
+    return `
+      <div class="detail-card">
+        <h4>${escapeHtml(label)}</h4>
+        <div class="event-meta">
+          ${added.map(value=>`<span class="mini-chip">+ ${escapeHtml(value)}</span>`).join('')}
+          ${removed.map(value=>`<span class="mini-chip">- ${escapeHtml(value)}</span>`).join('')}
+        </div>
+      </div>`;
+  };
+  const providerCard=providers.length?`
+    <div class="detail-card">
+      <h4>Provider readiness</h4>
+      <ul class="lane-list">${providers.map(provider=>`
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(provider.name||'provider')}</strong>
+            <span class="lane-route">${escapeHtml(provider.change||'updated')}</span>
+          </div>
+          <div>${escapeHtml(provider.summary||'')}</div>
+          ${Array.isArray(provider.details)&&provider.details.length?`<div class="event-meta" style="margin-top:8px">${provider.details.map(detail=>`<span class="mini-chip">${escapeHtml(titleize(detail.field||'change'))}: ${escapeHtml(detail.from||'n/a')} -> ${escapeHtml(detail.to||'n/a')}</span>`).join('')}</div>`:''}
+          ${provider.to?.reason?`<p style="margin-top:8px">${escapeHtml(provider.to.reason)}</p>`:''}
+        </li>`).join('')}</ul>
+    </div>`:'';
+
+  node.innerHTML=`
+    <div class="detail-stack">
+      <div class="detail-card">
+        <h4>Overview</h4>
+        <div class="detail-grid">
+          <div class="detail-kv"><span>mode</span><code>${escapeHtml(payload.mode||'unknown')}</code></div>
+          <div class="detail-kv"><span>changes detected</span><code>${escapeHtml(String(Boolean(payload.has_changes)))}</code></div>
+          <div class="detail-kv"><span>from</span><code>${escapeHtml(from.summary||from.trigger_kind||from.kind||'unknown')}</code></div>
+          <div class="detail-kv"><span>to</span><code>${escapeHtml(to.summary||to.trigger_kind||to.kind||'unknown')}</code></div>
+        </div>
+        ${summary.length?`<ul class="lane-list" style="margin-top:12px">${summary.map(item=>`<li class="lane-item">${escapeHtml(item)}</li>`).join('')}</ul>`:'<p style="margin-top:12px">No notable self-model drift detected.</p>'}
+      </div>
+      ${providerCard}
+      ${collectionCard('Capabilities',capabilities)}
+      ${collectionCard('Constraints',constraints)}
+      ${collectionCard('Growth goals',growthGoals)}
+      ${collectionCard('Recent events',recentEvents)}
+      ${changeList(runtime,'Runtime changes')}
+      ${changeList(adaptation,'Adaptation changes')}
+      ${changeList(identity,'Identity changes')}
+    </div>`;
+}
+
+function laneMiniChip(event){
+  const llm=event.llm||{};
+  const calls=Array.isArray(llm.actual_calls)?llm.actual_calls:[];
+  if(!calls.length)return'<span class="mini-chip">no lane trace</span>';
+  return calls.slice(0,3).map(call=>`<span class="mini-chip">${escapeHtml(call.provider)} · ${escapeHtml(titleize(call.stage))}</span>`).join('');
+}
+
+function renderChatTraces(){
+  const list=$('#chat-trace-list');
+  if(opsState.error&&(!opsState.chatTraces||!opsState.chatTraces.length)){
+    list.innerHTML='<div class="detail-empty">Connect the control plane to load recent chat execution traces.</div>';
+    return;
+  }
+  if(!opsState.chatTraces.length){
+    list.innerHTML='<div class="detail-empty">No chat traces match the current filter yet.</div>';
+    return;
+  }
+  list.innerHTML=opsState.chatTraces.map(trace=>{
+    const payload=trace.trace||{};
+    const requestText=payload.request?.text||'';
+    const responseText=payload.response?.text||'';
+    const routeLabel=titleize(trace.route||payload.trace?.route||'chat');
+    const badgeClass=trace.cache_hit?'good':trace.outcome==='failed'?'warn':'';
+    const active=trace.id===opsState.selectedChatTraceId?' active':'';
+    const chips=[
+      trace.intent,
+      trace.channel && trace.channel!=='web'?`channel ${trace.channel}`:'',
+      trace.outcome,
+      trace.cache_hit?'cache hit':'',
+      trace.depth!==undefined&&trace.depth!==null?`depth ${trace.depth}`:'',
+    ].filter(Boolean);
+    return `
+      <article class="event-card${active}" data-chat-trace-id="${trace.id}">
+        <div class="event-top">
+          <span class="badge ${badgeClass}">${escapeHtml(routeLabel)}</span>
+          <span class="event-time">${escapeHtml(fmtTime(trace.created_at))}</span>
+        </div>
+        <div class="event-summary">${escapeHtml(compactText(requestText||'No request text recorded.',150))}</div>
+        <div class="trace-response">${escapeHtml(compactText(responseText||'No response body recorded.',180))}</div>
+        <div class="event-meta">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+      </article>`;
+  }).join('');
+}
+
+function renderChatTraceDetail(){
+  const selected=opsState.chatTraces.find(trace=>trace.id===opsState.selectedChatTraceId);
+  const node=$('#chat-trace-detail');
+  if(!selected){
+    node.innerHTML='<div class="detail-empty">Select a chat trace to inspect route choice, cache fingerprints, and full request-response text.</div>';
+    return;
+  }
+  const payload=selected.trace||{};
+  const meta=payload.trace||{};
+  const details=payload.details;
+  const detailsCard=hasContent(details)?`
+    <div class="detail-card">
+      <h4>Route details</h4>
+      <div class="preview-box"><pre>${escapeHtml(JSON.stringify(details,null,2))}</pre></div>
+    </div>`:'';
+  node.innerHTML=`
+    <div class="detail-stack">
+      <div class="detail-card">
+        <h4>Overview</h4>
+        <div class="detail-grid">
+          <div class="detail-kv"><span>route</span><code>${escapeHtml(selected.route||meta.route||'unknown')}</code></div>
+          <div class="detail-kv"><span>outcome</span><code>${escapeHtml(selected.outcome||payload.outcome||'unknown')}</code></div>
+          <div class="detail-kv"><span>intent</span><code>${escapeHtml(selected.intent||meta.intent||'unknown')}</code></div>
+          <div class="detail-kv"><span>channel</span><code>${escapeHtml(selected.channel||meta.channel||'unknown')}</code></div>
+          <div class="detail-kv"><span>sender</span><code>${escapeHtml(selected.sender||meta.sender||'unknown')}</code></div>
+          <div class="detail-kv"><span>depth</span><code>${escapeHtml(String(selected.depth??meta.depth??0))}</code></div>
+          <div class="detail-kv"><span>cache hit</span><code>${escapeHtml(String(Boolean(selected.cache_hit??meta.cache_hit)))}</code></div>
+          <div class="detail-kv"><span>cache eligible</span><code>${escapeHtml(String(Boolean(meta.cache_eligible)))}</code></div>
+          <div class="detail-kv"><span>cache hash</span><code>${escapeHtml(meta.cache_hash||'n/a')}</code></div>
+          <div class="detail-kv"><span>created</span><code>${escapeHtml(selected.created_at||'n/a')}</code></div>
+        </div>
+      </div>
+      <div class="detail-card">
+        <h4>Request and response</h4>
+        <div class="preview-grid">
+          <div class="preview-box"><pre>${escapeHtml(payload.request?.text||'')}</pre></div>
+          <div class="preview-box"><pre>${escapeHtml(payload.response?.text||'')}</pre></div>
+        </div>
+      </div>
+      ${detailsCard}
+    </div>`;
+}
+
+function renderAutonomyRuns(){
+  const list=$('#autonomy-run-list');
+  if(opsState.error&&(!opsState.recentActionRuns||!opsState.recentActionRuns.length)){
+    list.innerHTML='<div class="detail-empty">Connect the control plane to load recent autonomy action runs.</div>';
+    return;
+  }
+  if(!opsState.recentActionRuns.length){
+    list.innerHTML='<div class="detail-empty">No autonomy action runs have been recorded yet.</div>';
+    return;
+  }
+  list.innerHTML=opsState.recentActionRuns.map(run=>{
+    const active=run.id===opsState.selectedActionRunId?' active':'';
+    const badgeClass=badgeTone(run.outcome);
+    const chips=[
+      titleize(run.task_kind),
+      titleize(run.task_status),
+      `task ${run.task_id}`,
+      run.tool?`tool ${run.tool}`:'',
+      run.goal_id!==null&&run.goal_id!==undefined?`goal ${run.goal_id}`:'',
+    ].filter(Boolean);
+    return `
+      <article class="event-card${active}" data-action-run-id="${run.id}">
+        <div class="event-top">
+          <span class="badge ${badgeClass}">${escapeHtml(titleize(run.outcome))}</span>
+          <span class="event-time">${escapeHtml(fmtTime(run.created_at))}</span>
+        </div>
+        <div class="event-summary">${escapeHtml(compactText(run.summary||run.task_title||'autonomy run',150))}</div>
+        <div class="trace-response">${escapeHtml(compactText(run.task_title||'',160))}</div>
+        <div class="event-meta">${chips.map(chip=>`<span class="mini-chip">${escapeHtml(chip)}</span>`).join('')}</div>
+      </article>`;
+  }).join('');
+}
+
+function renderAutonomyDetail(){
+  const node=$('#autonomy-detail');
+  const selected=opsState.recentActionRuns.find(run=>run.id===opsState.selectedActionRunId);
+  if(!selected){
+    node.innerHTML='<div class="detail-empty">Select an autonomy action run to inspect task causes, retries, growth links, and snapshots.</div>';
+    return;
+  }
+  if(opsState.autonomyTraceLoading&&!opsState.selectedActionRunTrace&&!opsState.selectedTaskTrace){
+    node.innerHTML='<div class="detail-empty">Loading action-run and task trace...</div>';
+    return;
+  }
+
+  const runTrace=opsState.selectedActionRunTrace&&opsState.selectedActionRunTrace.action_run?.id===selected.id
+    ? opsState.selectedActionRunTrace
+    : null;
+  const taskTrace=opsState.selectedTaskTrace&&opsState.selectedTaskTrace.task?.id===selected.task_id
+    ? opsState.selectedTaskTrace
+    : runTrace?.task_trace||null;
+  const outputTrace=runTrace?.output_trace||selected.output?.trace||null;
+  const traceRefs=taskTrace?.trace||{};
+  const observation=taskTrace?.observation||null;
+  const growthEvent=taskTrace?.growth_event||null;
+  const snapshot=taskTrace?.snapshot||null;
+  const builtToolHealth=taskTrace?.built_tool_health||null;
+  const retryState=taskTrace?.current_retry_state||taskTrace?.retry_state||selected.output?.retry_state||null;
+  const actionRuns=Array.isArray(taskTrace?.action_runs)?taskTrace.action_runs:[];
+  const autonomyError=opsState.autonomyTraceError?`
+    <div class="detail-card">
+      <h4>Trace status</h4>
+      <p>${escapeHtml(opsState.autonomyTraceError)}</p>
+    </div>`:'';
+  const outputTraceCard=outputTrace?`
+    <div class="detail-card">
+      <h4>Action run output trace</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>observation</span><code>${escapeHtml(String(outputTrace.observation_id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>growth event</span><code>${escapeHtml(String(outputTrace.growth_event_id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>snapshot</span><code>${escapeHtml(String(outputTrace.snapshot_id??'n/a'))}</code></div>
+      </div>
+    </div>`:'';
+  const taskRefsCard=taskTrace?`
+    <div class="detail-card">
+      <h4>Task trace refs</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>observation</span><code>${escapeHtml(String(traceRefs.observation_id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>growth event</span><code>${escapeHtml(String(traceRefs.growth_event_id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>snapshot</span><code>${escapeHtml(String(traceRefs.snapshot_id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>retry key</span><code>${escapeHtml(traceRefs.retry_key||'n/a')}</code></div>
+        <div class="detail-kv"><span>target</span><code>${escapeHtml(traceRefs.target||'n/a')}</code></div>
+        <div class="detail-kv"><span>trigger kind</span><code>${escapeHtml(traceRefs.trigger_kind||'n/a')}</code></div>
+      </div>
+    </div>`:'';
+  const observationCard=observation?`
+    <div class="detail-card">
+      <h4>Observation</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>id</span><code>${escapeHtml(String(observation.id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>kind</span><code>${escapeHtml(observation.kind||'unknown')}</code></div>
+        <div class="detail-kv"><span>source</span><code>${escapeHtml(observation.source||'unknown')}</code></div>
+        <div class="detail-kv"><span>created</span><code>${escapeHtml(observation.created_at||'n/a')}</code></div>
+      </div>
+      <p style="margin-top:12px"><strong>${escapeHtml(observation.content||'')}</strong></p>
+      ${hasContent(observation.context)?`<div class="preview-box" style="margin-top:12px"><pre>${escapeHtml(JSON.stringify(observation.context,null,2))}</pre></div>`:''}
+    </div>`:'';
+  const growthEventCard=growthEvent?`
+    <div class="detail-card">
+      <h4>Growth event</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>id</span><code>${escapeHtml(String(growthEvent.id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>kind</span><code>${escapeHtml(growthEvent.kind||'unknown')}</code></div>
+        <div class="detail-kv"><span>source</span><code>${escapeHtml(growthEvent.source||'unknown')}</code></div>
+        <div class="detail-kv"><span>target</span><code>${escapeHtml(growthEvent.target||'n/a')}</code></div>
+        <div class="detail-kv"><span>success</span><code>${escapeHtml(String(Boolean(growthEvent.success)))}</code></div>
+        <div class="detail-kv"><span>created</span><code>${escapeHtml(growthEvent.created_at||'n/a')}</code></div>
+      </div>
+      <p style="margin-top:12px"><strong>${escapeHtml(growthEvent.summary||'')}</strong></p>
+      ${hasContent(growthEvent.details)?`<div class="preview-box" style="margin-top:12px"><pre>${escapeHtml(JSON.stringify(growthEvent.details,null,2))}</pre></div>`:''}
+    </div>`:'';
+  const snapshotCard=snapshot?`
+    <div class="detail-card">
+      <h4>Snapshot</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>id</span><code>${escapeHtml(String(snapshot.id??'n/a'))}</code></div>
+        <div class="detail-kv"><span>trigger</span><code>${escapeHtml(snapshot.trigger_kind||'unknown')}</code></div>
+        <div class="detail-kv"><span>target</span><code>${escapeHtml(snapshot.trigger_target||'n/a')}</code></div>
+        <div class="detail-kv"><span>primary file</span><code>${escapeHtml(snapshot.snapshot?.identity?.primary_file||'n/a')}</code></div>
+        <div class="detail-kv"><span>capabilities</span><code>${escapeHtml(String(snapshot.capability_count??'n/a'))}</code></div>
+        <div class="detail-kv"><span>constraints</span><code>${escapeHtml(String(snapshot.constraint_count??'n/a'))}</code></div>
+      </div>
+      <p style="margin-top:12px"><strong>${escapeHtml(snapshot.summary||'')}</strong></p>
+      ${hasContent(snapshot.snapshot)?`<div class="preview-box" style="margin-top:12px"><pre>${escapeHtml(JSON.stringify(snapshot.snapshot,null,2))}</pre></div>`:''}
+    </div>`:'';
+  const builtToolCard=builtToolHealth?`
+    <div class="detail-card">
+      <h4>Built tool health</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>tool</span><code>${escapeHtml(builtToolHealth.tool_name||'unknown')}</code></div>
+        <div class="detail-kv"><span>file</span><code>${escapeHtml(builtToolHealth.filename||'n/a')}</code></div>
+        <div class="detail-kv"><span>failures</span><code>${escapeHtml(String(builtToolHealth.failure_count??0))}</code></div>
+        <div class="detail-kv"><span>quarantined until</span><code>${escapeHtml(builtToolHealth.quarantined_until||'n/a')}</code></div>
+      </div>
+      ${builtToolHealth.last_error?`<p style="margin-top:12px"><strong>${escapeHtml(builtToolHealth.last_error)}</strong></p>`:''}
+    </div>`:'';
+  const retryCard=retryState?`
+    <div class="detail-card">
+      <h4>Retry state</h4>
+      <div class="detail-grid">
+        <div class="detail-kv"><span>failure class</span><code>${escapeHtml(retryState.failure_class||'unknown')}</code></div>
+        <div class="detail-kv"><span>attempts</span><code>${escapeHtml(String(retryState.attempt_count??0))}</code></div>
+        <div class="detail-kv"><span>next retry</span><code>${escapeHtml(retryState.next_retry_at||'n/a')}</code></div>
+        <div class="detail-kv"><span>quarantined until</span><code>${escapeHtml(retryState.quarantined_until||'n/a')}</code></div>
+      </div>
+      ${retryState.last_error?`<p style="margin-top:12px"><strong>${escapeHtml(retryState.last_error)}</strong></p>`:''}
+    </div>`:'';
+  const historyCard=actionRuns.length?`
+    <div class="detail-card">
+      <h4>Task action history</h4>
+      <ul class="lane-list">${actionRuns.slice().reverse().slice(0,6).map(run=>`
+        <li class="lane-item">
+          <div class="lane-head">
+            <strong>${escapeHtml(titleize(run.outcome||'unknown'))}</strong>
+            <span class="lane-route">${escapeHtml(run.created_at||'')}</span>
+          </div>
+          <div>${escapeHtml(run.summary||'')}</div>
+        </li>`).join('')}</ul>
+    </div>`:'';
+  node.innerHTML=`
+    <div class="detail-stack">
+      <div class="detail-card">
+        <h4>Overview</h4>
+        <div class="detail-grid">
+          <div class="detail-kv"><span>task kind</span><code>${escapeHtml(selected.task_kind||'unknown')}</code></div>
+          <div class="detail-kv"><span>outcome</span><code>${escapeHtml(selected.outcome||'unknown')}</code></div>
+          <div class="detail-kv"><span>task status</span><code>${escapeHtml(String(selected.task_status||'unknown'))}</code></div>
+          <div class="detail-kv"><span>task id</span><code>${escapeHtml(String(selected.task_id??'n/a'))}</code></div>
+          <div class="detail-kv"><span>tool</span><code>${escapeHtml(selected.tool||'n/a')}</code></div>
+          <div class="detail-kv"><span>goal</span><code>${escapeHtml(String(selected.goal_id??'n/a'))}</code></div>
+        </div>
+        <p style="margin-top:12px"><strong>${escapeHtml(selected.summary||selected.task_title||'')}</strong></p>
+        ${selected.task_title?`<p style="margin-top:8px">${escapeHtml(selected.task_title)}</p>`:''}
+      </div>
+      ${autonomyError}
+      ${outputTraceCard}
+      ${taskRefsCard}
+      ${retryCard}
+      ${observationCard}
+      ${growthEventCard}
+      ${snapshotCard}
+      ${builtToolCard}
+      ${historyCard}
+    </div>`;
+}
+
+function renderGrowthList(){
+  const list=$('#growth-list');
+  if(opsState.error&&(!opsState.growthEvents||!opsState.growthEvents.length)){
+    list.innerHTML='<div class="detail-empty">Connect the control plane to load forge growth events.</div>';
+    return;
+  }
+  if(!opsState.growthEvents.length){
+    list.innerHTML='<div class="detail-empty">No growth events match the current filter yet.</div>';
+    return;
+  }
+  list.innerHTML=opsState.growthEvents.map(event=>{
+    const active=event.id===opsState.selectedGrowthId?' active':'';
+    const good=event.success?'good':'warn';
+    const target=event.target?`<div class="event-target">${escapeHtml(event.target)}</div>`:'';
+    return `
+      <article class="event-card${active}" data-growth-id="${event.id}">
+        <div class="event-top">
+          <span class="badge ${good}">${escapeHtml(titleize(event.kind))}</span>
+          <span class="event-time">${escapeHtml(fmtTime(event.created_at))}</span>
+        </div>
+        <div class="event-summary">${escapeHtml(event.summary)}</div>
+        ${target}
+        <div class="event-meta">${laneMiniChip(event)}</div>
+      </article>`;
+  }).join('');
+}
+
+function renderDetail(){
+  const selected=opsState.growthEvents.find(event=>event.id===opsState.selectedGrowthId);
+  const node=$('#growth-detail');
+  if(!selected){
+    node.innerHTML='<div class="detail-empty">Select a forge growth event to inspect model lanes, fallbacks, and previews.</div>';
+    return;
+  }
+  const execution=selected.execution||{};
+  const llm=selected.llm||execution.llm||{};
+  const calls=Array.isArray(llm.actual_calls)?llm.actual_calls:[];
+  const preview=selected.auto_run_preview;
+  const request=selected.request?`<div class="detail-card"><h4>Request</h4><p>${escapeHtml(selected.request)}</p></div>`:'';
+  const previewCard=preview?`
+    <div class="detail-card">
+      <h4>Auto-run preview</h4>
+      <div class="preview-grid">
+        <div class="preview-box"><pre>${escapeHtml(JSON.stringify(preview.input,null,2))}</pre></div>
+        <div class="preview-box"><pre>${escapeHtml(JSON.stringify(preview.output,null,2))}</pre></div>
+      </div>
+    </div>`:'';
+  const inspection=selected.registered_tool_inspection?`
+    <div class="detail-card">
+      <h4>Registered tool inspection</h4>
+      <p><strong>${escapeHtml(selected.registered_tool_inspection.name||'tool')}</strong></p>
+      <p>${escapeHtml(selected.registered_tool_inspection.issue||'healthy')}</p>
+    </div>`:'';
+  node.innerHTML=`
+    <div class="detail-stack">
+      <div class="detail-card">
+        <h4>Overview</h4>
+        <div class="detail-grid">
+          <div class="detail-kv"><span>kind</span><code>${escapeHtml(selected.kind)}</code></div>
+          <div class="detail-kv"><span>outcome</span><code>${escapeHtml(execution.outcome||String(selected.success))}</code></div>
+          <div class="detail-kv"><span>source</span><code>${escapeHtml(selected.source||'')}</code></div>
+          <div class="detail-kv"><span>target</span><code>${escapeHtml(selected.target||'n/a')}</code></div>
+        </div>
+        <p style="margin-top:12px"><strong>${escapeHtml(selected.summary)}</strong></p>
+      </div>
+      ${request}
+      <div class="detail-card">
+        <h4>Predicted lanes</h4>
+        <div class="detail-grid">
+          <div class="detail-kv"><span>intent</span><code>${escapeHtml(llm.predicted_intent_model||'unavailable')}</code></div>
+          <div class="detail-kv"><span>implementation</span><code>${escapeHtml(llm.predicted_implementation_model||'unavailable')}</code></div>
+        </div>
+      </div>
+      <div class="detail-card">
+        <h4>Actual calls</h4>
+        ${calls.length?`<ul class="lane-list">${calls.map(call=>`
+          <li class="lane-item">
+            <div class="lane-head">
+              <strong>${escapeHtml(titleize(call.stage))}</strong>
+              <span class="lane-route">${escapeHtml(call.route||'')}</span>
+            </div>
+            <div>${escapeHtml(call.provider||'unknown')} · ${escapeHtml(call.model||'')}</div>
+          </li>`).join('')}</ul>`:'<div class="detail-empty">No recorded LLM calls for this event.</div>'}
+      </div>
+      ${previewCard}
+      ${inspection}
+    </div>`;
+}
+
+async function loadSelectedAutonomyTrace(){
+  const selected=opsState.recentActionRuns.find(run=>run.id===opsState.selectedActionRunId);
+  if(!selected){
+    opsState.selectedActionRunTrace=null;
+    opsState.selectedTaskTrace=null;
+    opsState.autonomyTraceLoading=false;
+    opsState.autonomyTraceError='';
+    renderOps();
+    return;
+  }
+  const requestKey=`${selected.id}:${Date.now()}`;
+  opsState.autonomyTraceRequestKey=requestKey;
+  opsState.autonomyTraceLoading=true;
+  opsState.autonomyTraceError='';
+  renderOps();
+
+  const [runTrace,taskTrace]=await Promise.all([
+    api(`/api/autonomy/action-runs/${selected.id}/trace`),
+    api(`/api/autonomy/tasks/${selected.task_id}/trace`),
+  ]);
+
+  if(opsState.autonomyTraceRequestKey!==requestKey)return;
+
+  opsState.autonomyTraceLoading=false;
+  opsState.selectedActionRunTrace=runTrace&&!runTrace.error?runTrace:null;
+  opsState.selectedTaskTrace=taskTrace&&!taskTrace.error
+    ? taskTrace
+    : (runTrace&&!runTrace.error&&runTrace.task_trace?runTrace.task_trace:null);
+  const runError=!runTrace?'Could not load action-run trace.':(runTrace.error||'');
+  const taskError=!taskTrace?'Could not load task trace.':(taskTrace.error||'');
+  opsState.autonomyTraceError=[runError,taskError].filter(Boolean).join(' ');
+  renderOps();
+}
+
+function renderOps(){
+  renderOpsSummary();
+  $$('#chat-filters .filter-chip').forEach(btn=>btn.classList.toggle('active',btn.dataset.chatRoute===opsState.chatRouteFilter));
+  $$('#growth-filters .filter-chip').forEach(btn=>btn.classList.toggle('active',btn.dataset.growthFilter===opsState.growthFilter));
+  renderWorldState();
+  renderSelfModelDiff();
+  renderChatTraces();
+  renderChatTraceDetail();
+  renderAutonomyRuns();
+  renderAutonomyDetail();
+  renderGrowthList();
+  renderDetail();
+}
+
+async function loadOps(){
+  const growthParams=new URLSearchParams({limit:'12'});
+  if(opsState.growthFilter!=='all')growthParams.set('kind',opsState.growthFilter);
+  const chatParams=new URLSearchParams({limit:'8'});
+  if(opsState.chatRouteFilter!=='all')chatParams.set('route',opsState.chatRouteFilter);
+  const [overview,growth,chats,selfModelDiff,worldProjects]=await Promise.all([
+    api('/api/autonomy/overview'),
+    api(`/api/growth/events?${growthParams.toString()}`),
+    api(`/api/chat/traces?${chatParams.toString()}`),
+    api('/api/self-model/diff'),
+    api('/api/world/projects'),
+  ]);
+
+  const overviewError=overview?.error;
+  const growthError=growth?.error;
+  const chatError=chats?.error;
+  const selfModelDiffError=selfModelDiff?.error;
+  const worldProjectsError=worldProjects?.error;
+  if(overviewError||growthError||chatError||selfModelDiffError||worldProjectsError){
+    const authNeeded=(overview?.status===401||growth?.status===401||chats?.status===401||selfModelDiff?.status===401||worldProjects?.status===401);
+    setOpsError(authNeeded?'Operations are locked. Add your API token above to inspect forge activity.':(overviewError||growthError||chatError||selfModelDiffError||worldProjectsError||'Could not load operations panel.'));
+  }else{
+    setOpsError('');
+  }
+
+  opsState.overview=overview&&!overview.error?overview:null;
+  opsState.worldProjects=worldProjects&&!worldProjects.error?worldProjects:null;
+  opsState.worldChanges=opsState.worldProjects?.changes||null;
+  opsState.selfModelDiff=selfModelDiff&&!selfModelDiff.error?selfModelDiff:null;
+  opsState.chatTraces=chats&&!chats.error&&Array.isArray(chats.traces)?chats.traces:[];
+  opsState.recentActionRuns=opsState.overview&&Array.isArray(opsState.overview.recent_action_runs)
+    ? opsState.overview.recent_action_runs
+    : [];
+  if(growth&&!growth.error&&Array.isArray(growth.events)){
+    opsState.growthEvents=growth.events;
+  }else if(opsState.overview&&Array.isArray(opsState.overview.recent_growth_events)){
+    opsState.growthEvents=opsState.overview.recent_growth_events;
+  }else{
+    opsState.growthEvents=[];
+  }
+
+  if(!opsState.selectedChatTraceId||!opsState.chatTraces.some(trace=>trace.id===opsState.selectedChatTraceId)){
+    opsState.selectedChatTraceId=opsState.chatTraces[0]?.id||null;
+  }
+  if(!opsState.selectedActionRunId||!opsState.recentActionRuns.some(run=>run.id===opsState.selectedActionRunId)){
+    opsState.selectedActionRunId=opsState.recentActionRuns[0]?.id||null;
+    opsState.selectedActionRunTrace=null;
+    opsState.selectedTaskTrace=null;
+  }
+  if(!opsState.selectedGrowthId||!opsState.growthEvents.some(event=>event.id===opsState.selectedGrowthId)){
+    opsState.selectedGrowthId=opsState.growthEvents[0]?.id||null;
+  }
+  renderOps();
+
+  if(opsState.selectedActionRunId){
+    loadSelectedAutonomyTrace();
+  }
+}
+
+function applyToken(){
+  opsState.token=$('#token').value.trim();
+  localStorage.setItem('nyx_api_token',opsState.token);
+  loadOps();
+}
+
+$('#btn').addEventListener('click',send);
+$('#in').addEventListener('keydown',event=>{if(event.key==='Enter')send()});
+$('#ops-refresh').addEventListener('click',loadOps);
+$('#token-save').addEventListener('click',applyToken);
+$('#token').addEventListener('keydown',event=>{if(event.key==='Enter')applyToken()});
+$('#jump-ops').addEventListener('click',()=>$('#ops-panel').scrollIntoView({behavior:'smooth',block:'start'}));
+
+document.addEventListener('click',event=>{
+  const chatFilter=event.target.closest('[data-chat-route]');
+  if(chatFilter){
+    opsState.chatRouteFilter=chatFilter.dataset.chatRoute||'all';
+    loadOps();
+    return;
+  }
+  const chatTrace=event.target.closest('[data-chat-trace-id]');
+  if(chatTrace){
+    opsState.selectedChatTraceId=Number(chatTrace.dataset.chatTraceId);
+    renderOps();
+    return;
+  }
+  const actionRun=event.target.closest('[data-action-run-id]');
+  if(actionRun){
+    opsState.selectedActionRunId=Number(actionRun.dataset.actionRunId);
+    opsState.selectedActionRunTrace=null;
+    opsState.selectedTaskTrace=null;
+    renderOps();
+    loadSelectedAutonomyTrace();
+    return;
+  }
+  const filter=event.target.closest('[data-growth-filter]');
+  if(filter){
+    opsState.growthFilter=filter.dataset.growthFilter||'all';
+    loadOps();
+    return;
+  }
+  const card=event.target.closest('[data-growth-id]');
+  if(card){
+    opsState.selectedGrowthId=Number(card.dataset.growthId);
+    renderOps();
+  }
+});
+
+// Browser session list: hits /api/tools/dispatch with session_list, renders
+// open sessions with close buttons. Uses the same auth headers as everything
+// else. Purely additive — no backend work needed, the tool dispatch path
+// already supports session commands.
+async function callBrowserTool(input){
+  return api('/api/tools/dispatch',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:'browser',input}),
+  });
+}
+function fmtIdle(secs){
+  if(secs==null)return'';
+  const s=Number(secs)||0;
+  if(s<60)return `${s}s idle`;
+  if(s<3600)return `${Math.floor(s/60)}m ${s%60}s idle`;
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m idle`;
+}
+async function loadBrowserSessions(){
+  const container=$('#browser-sessions-list');
+  if(!container)return;
+  const result=await callBrowserTool({command:'session_list'});
+  if(!result||result.error){
+    container.innerHTML=`<div class="empty">sessions unavailable</div>`;
+    return;
+  }
+  const sessions=result?.raw_result?.output?.sessions
+    ||result?.output?.sessions
+    ||[];
+  if(!Array.isArray(sessions)||sessions.length===0){
+    container.innerHTML=`<div class="empty">no open sessions</div>`;
+    return;
+  }
+  container.innerHTML=sessions.map(s=>`
+    <div class="event-card" data-browser-session-row>
+      <div class="event-row">
+        <span class="event-title">${(s.final_url||'about:blank').replace(/[<>]/g,'')}</span>
+        <button class="filter-chip" type="button" data-close-browser-session="${s.session_id}">close</button>
+      </div>
+      <div class="event-meta">${s.session_id} · ${fmtIdle(s.idle_seconds)}</div>
+    </div>
+  `).join('');
+}
+async function closeBrowserSession(id){
+  if(!id)return;
+  await callBrowserTool({command:'session_close',session_id:id});
+  loadBrowserSessions();
+}
+$('#browser-sessions-refresh').addEventListener('click',loadBrowserSessions);
+document.addEventListener('click',event=>{
+  const closeBtn=event.target.closest('[data-close-browser-session]');
+  if(closeBtn){
+    closeBrowserSession(closeBtn.dataset.closeBrowserSession);
+  }
+});
+
+loadHistory();
+pollStats();
+loadOps();
+loadBrowserSessions();
+setInterval(pollStats,5000);
+setInterval(pollProactive,10000);
+setInterval(loadOps,12000);
+setInterval(loadBrowserSessions,15000);
+</script>
+</body>
+</html>

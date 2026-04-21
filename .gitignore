@@ -1,0 +1,26 @@
+/target/
+workspace/
+*.pyc
+__pycache__/
+.DS_Store
+.env
+*.bak
+/tmp/
+sandbox/.sandbox_*
+sandbox/scratch/
+nohup.out
+/plugins/
+docs/
+
+# Large local archives (not source)
+Archive.zip
+
+# Test-leftover artifacts with UUID suffixes
+agents/guardian_agent_*.py
+tools/failing_probe_*.py
+tools/tool_overview_probe_*
+tools/duplicate_probe_*
+tools/improvement_tool_*
+tools/pocket_mirror_*
+workspace/evolve_*
+workspace/pocket_mood_*
