@@ -349,20 +349,44 @@ impl LlmGate {
     ) -> Result<LlmTextResponse> {
         match self.chat_auto_traced(prompt, max_tokens).await {
             Ok(response) => Ok(response),
-            Err(auto_error) => self
-                .chat_traced(prompt, max_tokens)
-                .await
-                .map(|mut response| {
-                    response.trace.route = "chat_auto_fallback".to_string();
-                    response
-                })
-                .with_context(|| {
-                    format!(
-                        "autonomous lane unavailable ({}) and primary fallback {} also failed",
-                        auto_error,
-                        self.preferred_chat_model_label()
-                    )
-                }),
+            Err(auto_error) => {
+                let fallback_attempts = self.chat_auto_fallback_attempts();
+                let fallback_label = fallback_attempts
+                    .iter()
+                    .map(|attempt| {
+                        Self::provider_model_label(
+                            attempt.provider.label(),
+                            self.model_for_provider(attempt.provider),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut last_fallback_error = None;
+
+                for attempt in fallback_attempts {
+                    match self.call_chat_attempt(&attempt, prompt, max_tokens).await {
+                        Ok(mut response) => {
+                            response.trace.route = attempt.route;
+                            return Ok(response);
+                        }
+                        Err(error) => last_fallback_error = Some(error),
+                    }
+                }
+
+                if let Some(fallback_error) = last_fallback_error {
+                    Err(fallback_error).with_context(|| {
+                        format!(
+                            "autonomous lane unavailable ({}) and distinct fallback {} also failed",
+                            auto_error, fallback_label
+                        )
+                    })
+                } else {
+                    Err(auto_error).with_context(|| {
+                        "autonomous lane unavailable and no distinct fallback provider remained"
+                            .to_string()
+                    })
+                }
+            }
         }
     }
 
@@ -1007,11 +1031,12 @@ impl LlmGate {
         let mut last_error = None;
 
         for attempt in 0..2 {
-            match self.client.post(&url).json(&body).send().await {
+            let should_retry = match self.client.post(&url).json(&body).send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     if !status.is_success() {
                         last_error = Some(anyhow::anyhow!("Ollama {}", status));
+                        false
                     } else {
                         let data: serde_json::Value = resp.json().await?;
                         let content = data["message"]["content"]
@@ -1022,15 +1047,23 @@ impl LlmGate {
                             return Ok(content.to_string());
                         }
                         last_error = Some(anyhow::anyhow!("Ollama returned empty content"));
+                        // A repeated empty response for the same prompt is not a useful retry.
+                        false
                     }
                 }
                 Err(error) => {
+                    // Retry only short-lived connection failures. Retrying timeouts just doubles
+                    // end-to-end latency for the same slow local generation path.
+                    let should_retry = error.is_connect();
                     last_error = Some(error.into());
+                    should_retry
                 }
-            }
+            };
 
-            if attempt == 0 {
+            if attempt == 0 && should_retry {
                 tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            } else {
+                break;
             }
         }
 
@@ -1236,6 +1269,17 @@ impl LlmGate {
             "tool_loop_policy_fallback",
             "tool_loop_policy_recovery",
         )
+    }
+
+    fn chat_auto_fallback_attempts(&self) -> Vec<LlmAttempt> {
+        let mut attempts = Vec::new();
+        if !self.anthropic_key.is_empty() {
+            attempts.push(LlmAttempt {
+                provider: LlmProviderChoice::Anthropic,
+                route: "chat_auto_fallback".to_string(),
+            });
+        }
+        attempts
     }
 
     fn model_for_provider(&self, provider: LlmProviderChoice) -> &str {

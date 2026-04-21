@@ -65,6 +65,7 @@ impl AppState {
                 "protected_core": telemetry.protected_core,
                 "strategy": telemetry.strategy,
                 "verification_mode": telemetry.verification_mode,
+                "file_provenance_operation_id": telemetry.file_provenance_operation_id,
             }),
             "forge",
             "self_edit_result",
@@ -105,6 +106,7 @@ impl AppState {
             "repair_rounds": telemetry.repair_rounds,
             "verification_failures": telemetry.verification_failures,
             "runtime_failures": telemetry.runtime_failures,
+            "file_provenance_operation_id": telemetry.file_provenance_operation_id,
         });
         if let Some(extra) = extra_details {
             if let (Some(details_obj), Some(extra_obj)) =

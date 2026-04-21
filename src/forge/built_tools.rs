@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::db::Db;
+use crate::file_provenance::{FileMutationProof, write_text_file_with_provenance};
 use crate::tools::ToolRuntimeStatus;
 
 use super::{
@@ -78,7 +79,7 @@ fn manifest_path_for_tool_name(tool_name: &str) -> PathBuf {
     Path::new("tools").join(format!("{}{}", tool_name, BUILT_TOOL_MANIFEST_SUFFIX))
 }
 
-pub(super) fn write_built_tool_manifest(spec: &TaskSpec) -> Result<()> {
+pub(super) fn write_built_tool_manifest(spec: &TaskSpec, operation_id: Option<&str>) -> Result<()> {
     let tool_name = tool_name_from_spec(spec)?;
     let manifest = BuiltToolManifest {
         name: tool_name.clone(),
@@ -91,11 +92,35 @@ pub(super) fn write_built_tool_manifest(spec: &TaskSpec) -> Result<()> {
     };
     let path = manifest_path_for_tool_name(&tool_name);
     let content = serde_json::to_string_pretty(&manifest)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, content)?;
-    sync_core_tool_registry_rs()?;
+    write_text_file_with_provenance(
+        &path,
+        &content,
+        FileMutationProof {
+            actor: "nyx",
+            source: "forge.built_tools",
+            action_kind: "tool_manifest_write",
+            operation_id,
+            description: Some(spec.purpose.as_str()),
+            outcome: "committed",
+            metadata: serde_json::json!({
+                "tool_name": tool_name,
+                "filename": spec.filename,
+                "path_kind": "tool_manifest",
+                "trigger": "tool_build",
+            }),
+        },
+    )?;
+    sync_core_tool_registry_rs(
+        operation_id,
+        "forge.built_tools",
+        "core_registry_sync",
+        Some("sync protected registry after tool manifest update"),
+        serde_json::json!({
+            "trigger": "tool_build",
+            "tool_name": spec.tool_name,
+            "filename": spec.filename,
+        }),
+    )?;
     Ok(())
 }
 
@@ -158,11 +183,38 @@ pub fn reconcile_built_tool_registration(
             .unwrap_or_default(),
     };
 
-    if let Some(parent) = manifest_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-    sync_core_tool_registry_rs()?;
+    let operation_id = crate::file_provenance::operation_id();
+    write_text_file_with_provenance(
+        &manifest_path,
+        &serde_json::to_string_pretty(&manifest)?,
+        FileMutationProof {
+            actor: "nyx",
+            source: "forge.reconcile_self_model",
+            action_kind: "tool_manifest_reconcile",
+            operation_id: Some(operation_id.as_str()),
+            description: Some(summary),
+            outcome: "committed",
+            metadata: serde_json::json!({
+                "tool_name": tool_name,
+                "filename": filename,
+                "path_kind": "tool_manifest",
+                "manifest_created": manifest_created,
+                "trigger": "reconcile_self_model",
+            }),
+        },
+    )?;
+    sync_core_tool_registry_rs(
+        Some(operation_id.as_str()),
+        "forge.reconcile_self_model",
+        "core_registry_sync",
+        Some("sync protected registry after self-model reconciliation"),
+        serde_json::json!({
+            "trigger": "reconcile_self_model",
+            "tool_name": tool_name,
+            "filename": filename,
+            "manifest_created": manifest_created,
+        }),
+    )?;
 
     let visible = load_registered_tools()
         .into_iter()
@@ -182,12 +234,23 @@ pub fn reconcile_built_tool_registration(
     })
 }
 
-pub(super) fn remove_built_tool_artifacts(spec: &TaskSpec) {
+pub(super) fn remove_built_tool_artifacts(spec: &TaskSpec, operation_id: Option<&str>) {
     std::fs::remove_file(&spec.filename).ok();
     if let Ok(tool_name) = tool_name_from_spec(spec) {
         std::fs::remove_file(manifest_path_for_tool_name(&tool_name)).ok();
     }
-    sync_core_tool_registry_rs().ok();
+    sync_core_tool_registry_rs(
+        operation_id,
+        "forge.cleanup",
+        "core_registry_sync",
+        Some("sync protected registry after cleanup"),
+        serde_json::json!({
+            "trigger": "cleanup",
+            "tool_name": spec.tool_name,
+            "filename": spec.filename,
+        }),
+    )
+    .ok();
 }
 
 fn load_registered_tools_from_manifests() -> Vec<BuiltToolManifest> {
@@ -600,11 +663,14 @@ fn core_registry_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("src/built_tools_registry.rs"))
 }
 
-pub(super) fn sync_core_tool_registry_rs() -> Result<()> {
+pub(super) fn sync_core_tool_registry_rs(
+    operation_id: Option<&str>,
+    source: &str,
+    action_kind: &str,
+    description: Option<&str>,
+    metadata: serde_json::Value,
+) -> Result<()> {
     let path = core_registry_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
 
     let tools = load_registered_tools_from_manifests();
     let entries = tools
@@ -636,6 +702,29 @@ pub static CORE_BUILT_TOOLS: &[CoreBuiltTool] = &[\n\
         entries
     );
 
-    std::fs::write(path, content)?;
+    write_text_file_with_provenance(
+        &path,
+        &content,
+        FileMutationProof {
+            actor: "nyx",
+            source,
+            action_kind,
+            operation_id,
+            description,
+            outcome: "committed",
+            metadata: {
+                let mut object = metadata.as_object().cloned().unwrap_or_default();
+                object.insert(
+                    "path_kind".to_string(),
+                    serde_json::json!("protected_core_registry"),
+                );
+                object.insert(
+                    "registered_tool_count".to_string(),
+                    serde_json::json!(tools.len()),
+                );
+                serde_json::Value::Object(object)
+            },
+        },
+    )?;
     Ok(())
 }

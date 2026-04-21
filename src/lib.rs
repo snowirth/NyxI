@@ -30,6 +30,7 @@ pub mod consciousness;
 pub mod constitution;
 pub mod db;
 pub mod embed;
+pub mod file_provenance;
 pub mod filewatcher;
 pub mod forge;
 pub mod improvement;

@@ -117,6 +117,7 @@ pub struct ForgeTelemetry {
     pub runtime_failures: usize,
     pub executed: bool,
     pub verified: Option<bool>,
+    pub file_provenance_operation_id: Option<String>,
     pub llm_usage: ForgeLlmUsage,
 }
 
@@ -204,6 +205,7 @@ pub struct EvolveTelemetry {
     pub verification_mode: String,
     pub executed: bool,
     pub verified: Option<bool>,
+    pub file_provenance_operation_id: Option<String>,
     pub llm_usage: ForgeLlmUsage,
 }
 
@@ -216,6 +218,7 @@ impl Default for EvolveTelemetry {
             verification_mode: "tool:file_ops".into(),
             executed: false,
             verified: None,
+            file_provenance_operation_id: None,
             llm_usage: ForgeLlmUsage::default(),
         }
     }
@@ -392,6 +395,7 @@ pub async fn dispatch_build_tool_action(
         llm_usage: ForgeLlmUsage::for_llm(llm.as_ref()),
         ..ForgeTelemetry::default()
     };
+    telemetry.file_provenance_operation_id = Some(crate::file_provenance::operation_id());
     let spec = match plan_tool_build(llm, user_request, nyx_response, &mut telemetry.llm_usage)
         .await
     {
@@ -450,7 +454,20 @@ pub async fn dispatch_build_tool_action(
         preflight.intent_model,
         preflight.implementation_model
     );
-    match execute_build_spec(llm, user_request, &spec, telemetry).await {
+    let file_provenance_operation_id = telemetry
+        .file_provenance_operation_id
+        .clone()
+        .unwrap_or_else(crate::file_provenance::operation_id);
+    telemetry.file_provenance_operation_id = Some(file_provenance_operation_id.clone());
+    match execute_build_spec(
+        llm,
+        user_request,
+        &spec,
+        &file_provenance_operation_id,
+        telemetry,
+    )
+    .await
+    {
         ForgeResult::Success {
             filename,
             description,
@@ -520,6 +537,7 @@ pub async fn dispatch_evolve_action(
         llm_usage: ForgeLlmUsage::for_llm(llm.as_ref()),
         ..EvolveTelemetry::default()
     };
+    telemetry.file_provenance_operation_id = Some(crate::file_provenance::operation_id());
     let plan = match plan_evolve_change(llm, user_request, &mut telemetry.llm_usage).await {
         Ok(plan) => plan,
         Err(error) => {
@@ -541,7 +559,12 @@ pub async fn dispatch_evolve_action(
     };
 
     let preflight = build_evolve_preflight(llm.as_ref(), user_request, &plan);
-    let telemetry = telemetry_for_preflight(&preflight, telemetry.llm_usage.clone(), 0);
+    let mut telemetry = telemetry_for_preflight(
+        &preflight,
+        telemetry.llm_usage.clone(),
+        0,
+        telemetry.file_provenance_operation_id.clone(),
+    );
     if !preflight.ready {
         return EvolveDispatchResult {
             dry_run,
@@ -574,7 +597,12 @@ pub async fn dispatch_evolve_action(
         };
     }
 
-    match execute_evolve_plan(llm, &plan, telemetry).await {
+    let file_provenance_operation_id = telemetry
+        .file_provenance_operation_id
+        .clone()
+        .unwrap_or_else(crate::file_provenance::operation_id);
+    telemetry.file_provenance_operation_id = Some(file_provenance_operation_id.clone());
+    match execute_evolve_plan(llm, &plan, &file_provenance_operation_id, telemetry).await {
         EvolveResult::Success {
             path,
             description,

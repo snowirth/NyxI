@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::sandbox::{SandboxSpec, shared_host_sandbox};
+use crate::file_provenance::{FileMutationProof, record_text_file_mutation};
 use crate::llm::LlmGate;
 
 use super::{
@@ -161,6 +162,7 @@ pub(super) fn build_evolve_preflight(
 pub(super) async fn execute_evolve_plan(
     llm: &Arc<LlmGate>,
     plan: &PlannedChange,
+    file_provenance_operation_id: &str,
     mut telemetry: EvolveTelemetry,
 ) -> EvolveResult {
     if let Ok(rel_path) = sanitize_relative_repo_path(&plan.path) {
@@ -178,6 +180,7 @@ pub(super) async fn execute_evolve_plan(
                 &project_root,
                 llm,
                 plan,
+                Some(file_provenance_operation_id),
                 &mut telemetry.llm_usage,
             )
             .await
@@ -185,6 +188,8 @@ pub(super) async fn execute_evolve_plan(
                 Ok(outcome) => {
                     let mut telemetry =
                         protected_evolve_telemetry(telemetry.llm_usage, outcome.repair_rounds);
+                    telemetry.file_provenance_operation_id =
+                        Some(file_provenance_operation_id.to_string());
                     telemetry.set_execution_status(true, Some(true));
                     EvolveResult::Success {
                         path: outcome.path,
@@ -205,7 +210,7 @@ pub(super) async fn execute_evolve_plan(
         }
     }
 
-    match apply_planned_change(plan).await {
+    match apply_planned_change(plan, file_provenance_operation_id).await {
         EvolveResult::Success {
             path,
             description,
@@ -254,6 +259,7 @@ pub(super) fn telemetry_for_preflight(
     preflight: &EvolvePreflight,
     llm_usage: ForgeLlmUsage,
     repair_rounds: usize,
+    file_provenance_operation_id: Option<String>,
 ) -> EvolveTelemetry {
     if preflight
         .plan
@@ -261,16 +267,22 @@ pub(super) fn telemetry_for_preflight(
         .map(|plan| plan.protected_core)
         .unwrap_or(false)
     {
-        protected_evolve_telemetry(llm_usage, repair_rounds)
+        let mut telemetry = protected_evolve_telemetry(llm_usage, repair_rounds);
+        telemetry.file_provenance_operation_id = file_provenance_operation_id;
+        telemetry
     } else {
         EvolveTelemetry {
+            file_provenance_operation_id,
             llm_usage,
             ..EvolveTelemetry::default()
         }
     }
 }
 
-async fn apply_planned_change(plan: &PlannedChange) -> EvolveResult {
+async fn apply_planned_change(
+    plan: &PlannedChange,
+    file_provenance_operation_id: &str,
+) -> EvolveResult {
     let change_report = build_change_report(plan);
     match crate::tools::run(
         "file_ops",
@@ -279,7 +291,18 @@ async fn apply_planned_change(plan: &PlannedChange) -> EvolveResult {
             "path": plan.path,
             "search": plan.search,
             "replace": plan.replace,
-            "description": plan.description
+            "description": plan.description,
+            "provenance": {
+                "actor": "nyx",
+                "source": "forge.evolve.file_ops",
+                "action_kind": "self_edit_evolve",
+                "operation_id": file_provenance_operation_id,
+                "description": plan.description,
+                "metadata": {
+                    "protected_core": false,
+                    "path_kind": "project_file",
+                }
+            }
         }),
     )
     .await
@@ -290,6 +313,8 @@ async fn apply_planned_change(plan: &PlannedChange) -> EvolveResult {
                 .unwrap_or(result["error"].as_str().unwrap_or("failed"));
             if result["error"].is_string() {
                 let mut telemetry = EvolveTelemetry::default();
+                telemetry.file_provenance_operation_id =
+                    Some(file_provenance_operation_id.to_string());
                 telemetry.set_execution_status(false, None);
                 EvolveResult::Failed {
                     reason: output.to_string(),
@@ -297,6 +322,8 @@ async fn apply_planned_change(plan: &PlannedChange) -> EvolveResult {
                 }
             } else {
                 let mut telemetry = EvolveTelemetry::default();
+                telemetry.file_provenance_operation_id =
+                    Some(file_provenance_operation_id.to_string());
                 telemetry.set_execution_status(true, Some(true));
                 EvolveResult::Success {
                     path: plan.path.clone(),
@@ -309,6 +336,7 @@ async fn apply_planned_change(plan: &PlannedChange) -> EvolveResult {
         }
         Err(error) => {
             let mut telemetry = EvolveTelemetry::default();
+            telemetry.file_provenance_operation_id = Some(file_provenance_operation_id.to_string());
             telemetry.set_execution_status(false, None);
             EvolveResult::Failed {
                 reason: error.to_string(),
@@ -353,6 +381,23 @@ pub(super) fn apply_protected_change_in_project(
 
     match write_result {
         Ok(()) => {
+            record_text_file_mutation(
+                &full_path,
+                Some(&content),
+                Some(&updated),
+                FileMutationProof {
+                    actor: "nyx",
+                    source: "forge.evolve.protected.test",
+                    action_kind: "self_edit_protected",
+                    operation_id: None,
+                    description: Some(plan.description.as_str()),
+                    outcome: "committed",
+                    metadata: serde_json::json!({
+                        "protected_core": true,
+                        "verification_mode": current_self_edit_verification_mode(),
+                    }),
+                },
+            )?;
             std::fs::remove_file(&backup_path).ok();
             Ok(rel_path.to_string_lossy().to_string())
         }
@@ -368,6 +413,7 @@ pub(super) async fn apply_protected_change_with_self_repair(
     project_root: &Path,
     llm: &Arc<LlmGate>,
     plan: &PlannedChange,
+    file_provenance_operation_id: Option<&str>,
     llm_usage: &mut ForgeLlmUsage,
 ) -> std::result::Result<ProtectedEditOutcome, ProtectedEditFailure> {
     let rel_path =
@@ -441,6 +487,30 @@ pub(super) async fn apply_protected_change_with_self_repair(
         .await
         {
             Ok(()) => {
+                if let Err(error) = record_text_file_mutation(
+                    &full_path,
+                    Some(&original_content),
+                    Some(&current_content),
+                    FileMutationProof {
+                        actor: "nyx",
+                        source: "forge.evolve.protected",
+                        action_kind: "self_edit_protected",
+                        operation_id: file_provenance_operation_id,
+                        description: Some(plan.description.as_str()),
+                        outcome: "committed",
+                        metadata: serde_json::json!({
+                            "protected_core": true,
+                            "repair_rounds": repair_attempts,
+                            "verification_mode": current_self_edit_verification_mode(),
+                        }),
+                    },
+                ) {
+                    restore_backup(&backup_path, &full_path);
+                    return Err(ProtectedEditFailure {
+                        reason: format!("failed to record file provenance: {}", error),
+                        executed,
+                    });
+                }
                 std::fs::remove_file(&backup_path).ok();
                 return Ok(ProtectedEditOutcome {
                     path: rel_path.to_string_lossy().to_string(),
@@ -591,6 +661,7 @@ fn protected_evolve_telemetry(llm_usage: ForgeLlmUsage, repair_rounds: usize) ->
         verification_mode: current_self_edit_verification_mode(),
         executed: false,
         verified: None,
+        file_provenance_operation_id: None,
         llm_usage,
     }
 }

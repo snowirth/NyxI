@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cmp::Reverse, collections::HashMap};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ pub fn compile_operator_brief(db: &Db, source: &str) -> Result<OperatorBrief> {
     let queue_summary = build_queue_summary(&snapshot);
     let what_changed_last =
         build_what_changed_last_summary(&recent_changes, recent_action.as_ref());
-    let what_nyx_already_did = build_what_nyx_already_did_summary(recent_action.as_ref());
+    let what_nyx_already_did = build_what_nyx_already_did_summary(db, recent_action.as_ref())?;
     let resume_brief = OperatorResumeBrief {
         what_matters_now: what_matters_summary.clone(),
         blocked_right_now: blocker_summary.clone(),
@@ -584,14 +584,105 @@ fn build_what_changed_last_summary(
 }
 
 fn build_what_nyx_already_did_summary(
+    db: &Db,
     recent_action: Option<&OperatorRecentAction>,
-) -> Option<String> {
-    recent_action.map(|action| {
+) -> Result<Option<String>> {
+    if let Some(action) = recent_action.filter(|action| action.verification_status != "verified") {
+        return Ok(Some(format!(
+            "What Nyx already did: {} ({}).",
+            action.task_title, action.outcome_summary
+        )));
+    }
+
+    if let Some(action_run) = select_operator_highlight_action_run(db)? {
+        return Ok(Some(format!(
+            "What Nyx already did: {} ({}).",
+            action_run.task_title,
+            build_outcome_summary(&action_run)
+        )));
+    }
+
+    Ok(recent_action.map(|action| {
         format!(
             "What Nyx already did: {} ({}).",
             action.task_title, action.outcome_summary
         )
-    })
+    }))
+}
+
+fn select_operator_highlight_action_run(db: &Db) -> Result<Option<ActionRunRecord>> {
+    let recent_runs = db.list_recent_autonomy_action_runs(12)?;
+
+    if let Some(run) = recent_runs
+        .iter()
+        .find(|run| action_run_requires_follow_up(run))
+        .cloned()
+    {
+        return Ok(Some(run));
+    }
+
+    let highlighted = recent_runs
+        .iter()
+        .filter(|run| run.executed)
+        .min_by_key(|run| {
+            (
+                operator_action_highlight_rank(run),
+                operator_action_verification_rank(run),
+                Reverse(run.id),
+            )
+        })
+        .cloned();
+
+    Ok(highlighted.or_else(|| recent_runs.into_iter().next()))
+}
+
+fn operator_action_highlight_rank(action_run: &ActionRunRecord) -> usize {
+    let effect_kind = action_run
+        .expected_effect
+        .as_ref()
+        .map(|effect| effect.kind.as_str());
+    let effect_target = action_run
+        .expected_effect
+        .as_ref()
+        .and_then(|effect| effect.target.as_deref());
+    let output_target = action_target_from_output(action_run.output.as_ref());
+
+    if matches!(
+        effect_kind,
+        Some("message_delivery" | "user_visible_follow_up")
+    ) || action_run.task_kind == "deliver_message"
+    {
+        0
+    } else if matches!(effect_kind, Some("memory_write")) || action_run.task_kind == "store_memory"
+    {
+        1
+    } else if matches!(effect_kind, Some("growth_review" | "self_model_alignment"))
+        || matches!(
+            action_run.task_kind.as_str(),
+            "review_growth" | "reconcile_self_model"
+        )
+    {
+        2
+    } else if action_run.task_kind == "run_tool" {
+        if action_run.tool.as_deref() == Some("git_info")
+            || effect_target == Some("git_info")
+            || output_target.as_deref() == Some("action=status")
+        {
+            5
+        } else {
+            4
+        }
+    } else {
+        3
+    }
+}
+
+fn operator_action_verification_rank(action_run: &ActionRunRecord) -> usize {
+    match action_run.verified {
+        Some(true) => 0,
+        None => 1,
+        Some(false) => 2,
+    }
 }
 
 fn build_action_reason(
