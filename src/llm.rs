@@ -753,16 +753,16 @@ impl LlmGate {
             }),
             serde_json::json!({
                 "name": "twitter",
-                "description": "Twitter/X: read home timeline, search tweets, post, reply, or like.",
+                "description": "Twitter/X: read home timeline or mentions, search tweets, post, reply, or like.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["timeline", "search", "post", "reply", "like"],
-                            "description": "timeline=home feed; search=query tweets; post=new tweet; reply=needs tweet_id+text; like=needs tweet_id"
+                            "enum": ["timeline", "mentions", "search", "post", "reply", "like"],
+                            "description": "timeline=home feed; mentions=mention notifications; search=query tweets; post=new tweet; reply=needs tweet_id+text; like=needs tweet_id"
                         },
-                        "count": { "type": "integer", "description": "Max items for timeline/search" },
+                        "count": { "type": "integer", "description": "Max items for timeline/mentions/search" },
                         "query": { "type": "string", "description": "Search query (action=search)" },
                         "text": { "type": "string", "description": "Tweet or reply body (post/reply)" },
                         "tweet_id": { "type": "string", "description": "Target tweet id (reply/like)" }

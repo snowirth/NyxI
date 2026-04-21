@@ -67,9 +67,20 @@ pub(super) fn format_built_tool_timestamp(timestamp: chrono::DateTime<chrono::Ut
 }
 
 fn repair_manifest_description(tool_name: &str, summary: &str) -> String {
-    let collapsed = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    sanitize_registered_tool_description(tool_name, summary)
+}
+
+fn looks_like_self_model_gap_description(description: &str) -> bool {
+    let lower = description.trim().to_ascii_lowercase();
+    lower.starts_with("self-model gap:")
+        || (lower.contains("tool growth reported")
+            && lower.contains("not visible in the live self-model"))
+}
+
+fn sanitize_registered_tool_description(tool_name: &str, description: &str) -> String {
+    let collapsed = description.split_whitespace().collect::<Vec<_>>().join(" ");
     let collapsed = collapsed.trim();
-    if collapsed.is_empty() {
+    if collapsed.is_empty() || looks_like_self_model_gap_description(collapsed) {
         return format!("Recovered registration for self-built tool {}", tool_name);
     }
     crate::trunc(collapsed, 160).to_string()
@@ -84,7 +95,7 @@ pub(super) fn write_built_tool_manifest(spec: &TaskSpec, operation_id: Option<&s
     let manifest = BuiltToolManifest {
         name: tool_name.clone(),
         filename: spec.filename.clone(),
-        description: spec.purpose.clone(),
+        description: sanitize_registered_tool_description(&tool_name, &spec.purpose),
         inputs: spec.inputs.clone(),
         outputs: spec.outputs.clone(),
         test_input: spec.test_input.clone(),
@@ -161,9 +172,7 @@ pub fn reconcile_built_tool_registration(
         filename: filename.clone(),
         description: existing_manifest
             .as_ref()
-            .map(|manifest| manifest.description.trim())
-            .filter(|description| !description.is_empty())
-            .map(str::to_string)
+            .map(|manifest| sanitize_registered_tool_description(&tool_name, &manifest.description))
             .unwrap_or_else(|| repair_manifest_description(&tool_name, summary)),
         inputs: existing_manifest
             .as_ref()
@@ -325,6 +334,7 @@ fn normalize_registered_tool_manifest(manifest: BuiltToolManifest) -> Option<Bui
     }
 
     Some(BuiltToolManifest {
+        description: sanitize_registered_tool_description(&manifest.name, &manifest.description),
         filename: path.to_string_lossy().to_string(),
         ..manifest
     })
@@ -727,4 +737,33 @@ pub static CORE_BUILT_TOOLS: &[CoreBuiltTool] = &[\n\
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_registered_tool_description_replaces_self_model_gap_text() {
+        let sanitized = sanitize_registered_tool_description(
+            "trace_probe",
+            "self-model gap: tool growth reported success for tools/trace_probe.py but capability trace_probe is not visible in the live self-model yet.",
+        );
+        assert_eq!(
+            sanitized,
+            "Recovered registration for self-built tool trace_probe"
+        );
+    }
+
+    #[test]
+    fn sanitize_registered_tool_description_preserves_real_purpose() {
+        let sanitized = sanitize_registered_tool_description(
+            "markdown_todo_extractor",
+            "Extract markdown checkbox items into structured todo entries.",
+        );
+        assert_eq!(
+            sanitized,
+            "Extract markdown checkbox items into structured todo entries."
+        );
+    }
 }

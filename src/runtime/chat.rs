@@ -248,7 +248,7 @@ impl AppState {
             "<tool_instructions>\nYou may call tools whenever they improve the answer. \
              Use web_search for time-sensitive or uncertain facts; git_info and github for repo and PRs; \
              vision to see the user's screen; weather for weather; file_ops only to read allowed project paths; \
-             twitter for timeline/search/post/reply/like; gif and image_gen when the user wants those. \
+             twitter for timeline/mentions/search/post/reply/like; gif and image_gen when the user wants those. \
              For self-built tools, plugin tools, and MCP tools listed below, call external_tool with the exact tool name and an arguments object. \
              Chain tools if needed. After tool results, reply briefly in your voice — no XML.\n</tool_instructions>\n\n",
         );
@@ -724,7 +724,7 @@ impl AppState {
                     .to_string();
                 if !matches!(
                     action.as_str(),
-                    "timeline" | "search" | "post" | "reply" | "like"
+                    "timeline" | "mentions" | "search" | "post" | "reply" | "like"
                 ) {
                     issue.get_or_insert_with(|| format!("unknown twitter action: {}", action));
                 }
