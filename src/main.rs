@@ -19,8 +19,15 @@ async fn main() -> Result<()> {
     let start = Instant::now();
     let mut config = nyx::Config::from_env();
     nyx::autodetect_location(&mut config).await;
+    let project_root = std::env::current_dir().unwrap_or_default();
+    let _instance_guard =
+        nyx::runtime_instance::acquire_runtime_instance_guard(&project_root, config.web_port)?;
 
     tracing::info!("Nyx V2 starting");
+    tracing::info!(
+        "runtime: single-instance guard active at {}",
+        _instance_guard.path().display()
+    );
 
     let state = nyx::build_state(config, start)?;
     install_runtime_panic_hook(state.db.clone());

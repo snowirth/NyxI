@@ -656,24 +656,42 @@ fn operator_action_highlight_rank(action_run: &ActionRunRecord) -> usize {
     } else if matches!(effect_kind, Some("memory_write")) || action_run.task_kind == "store_memory"
     {
         1
+    } else if matches!(
+        effect_kind,
+        Some(
+            "system_health_review"
+                | "operator_brief_review"
+                | "mentions_check"
+                | "timeline_review"
+                | "news_review"
+        )
+    ) || matches!(
+        action_run.task_kind.as_str(),
+        "review_system_health"
+            | "review_operator_brief"
+            | "check_mentions"
+            | "review_timeline"
+            | "review_news"
+    ) {
+        2
     } else if matches!(effect_kind, Some("growth_review" | "self_model_alignment"))
         || matches!(
             action_run.task_kind.as_str(),
             "review_growth" | "reconcile_self_model"
         )
     {
-        2
+        3
     } else if action_run.task_kind == "run_tool" {
         if action_run.tool.as_deref() == Some("git_info")
             || effect_target == Some("git_info")
             || output_target.as_deref() == Some("action=status")
         {
-            5
+            6
         } else {
-            4
+            5
         }
     } else {
-        3
+        4
     }
 }
 

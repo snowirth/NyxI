@@ -46,6 +46,7 @@ pub mod overnight;
 pub mod patterns;
 pub mod plugins;
 pub mod runtime;
+pub mod runtime_instance;
 pub mod soul;
 pub mod swarm;
 pub mod tools;

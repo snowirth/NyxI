@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
@@ -41,6 +43,10 @@ use retry::{
 const READY_TASK_FETCH_LIMIT: usize = 16;
 const DISPATCH_TASK_BATCH_LIMIT: usize = 4;
 const DEPENDENCY_BLOCKED_RESCHEDULE_DELAY_SECS: i64 = 120;
+const AUTONOMY_COLD_START_DELAY_SECS: u64 = 12;
+const AUTONOMY_BATCH_DRAIN_POLL_SECS: u64 = 1;
+const AUTONOMY_ACTIVE_POLL_SECS: u64 = 3;
+const AUTONOMY_IDLE_POLL_SECS: u64 = 10;
 pub(super) const GOAL_AWARENESS: &str = "Maintain situational awareness";
 pub(super) const GOAL_PROJECT_TRACKING: &str = "Track active project work";
 pub(super) const GOAL_KNOWLEDGE_CAPTURE: &str = "Capture durable knowledge";
@@ -56,6 +62,14 @@ const RECONCILE_SELF_MODEL_QUARANTINE_SECS: i64 = 24 * 60 * 60;
 const RUN_TOOL_RETRY_WINDOW_SECS: i64 = 60 * 60;
 const RUN_TOOL_RETRY_BACKOFF_SECS: [i64; 3] = [60, 5 * 60, 20 * 60];
 const RUN_TOOL_QUARANTINE_SECS: i64 = 6 * 60 * 60;
+const IDLE_INITIATIVE_COOLDOWN_SECS: i64 = 5 * 60;
+const IDLE_INITIATIVE_TASK_COOLDOWN_SECS: i64 = 10 * 60;
+const IDLE_OPERATOR_REVIEW_TASK_COOLDOWN_SECS: i64 = 15 * 60;
+const IDLE_SYSTEM_HEALTH_TASK_COOLDOWN_SECS: i64 = 10 * 60;
+const IDLE_MENTIONS_CHECK_TASK_COOLDOWN_SECS: i64 = 15 * 60;
+const IDLE_TIMELINE_REVIEW_TASK_COOLDOWN_SECS: i64 = 20 * 60;
+const IDLE_NEWS_REVIEW_TASK_COOLDOWN_SECS: i64 = 30 * 60;
+const IDLE_INITIATIVE_STATE_KEY: &str = "autonomy:last_idle_initiative_at";
 pub(crate) const STALE_RUNNING_TASK_TIMEOUT_SECS: i64 = 10 * 60;
 const STALE_RUNNING_TASK_RECOVERY_DELAY_SECS: i64 = 60;
 const ACTION_RUN_SCHEMA_VERSION: &str = "autonomy_action_run.v1";
@@ -375,14 +389,46 @@ pub fn ingest_observation(db: &Db, input: ObservationInput) -> Result<Observatio
 }
 
 pub async fn run(state: AppState, proactive_queue: ProactiveQueue) {
-    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(
+        AUTONOMY_COLD_START_DELAY_SECS,
+    ))
+    .await;
     tracing::info!("autonomy: online");
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-        if let Err(e) = dispatch_ready_tasks(&state, &proactive_queue).await {
-            tracing::warn!("autonomy: dispatch failed: {}", e);
-        }
+        let executed = match dispatch_ready_tasks(&state, &proactive_queue).await {
+            Ok(executed) => executed,
+            Err(error) => {
+                tracing::warn!("autonomy: dispatch failed: {}", error);
+                0
+            }
+        };
+        let seeded_initiative = if executed == 0 {
+            match maybe_seed_idle_initiative(&state).await {
+                Ok(seeded) => seeded,
+                Err(error) => {
+                    tracing::warn!("autonomy: idle initiative failed: {}", error);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(next_autonomy_loop_delay(
+            executed,
+            seeded_initiative,
+        )))
+        .await;
+    }
+}
+
+fn next_autonomy_loop_delay(executed: usize, seeded_initiative: bool) -> u64 {
+    if executed >= DISPATCH_TASK_BATCH_LIMIT {
+        AUTONOMY_BATCH_DRAIN_POLL_SECS
+    } else if executed > 0 || seeded_initiative {
+        AUTONOMY_ACTIVE_POLL_SECS
+    } else {
+        AUTONOMY_IDLE_POLL_SECS
     }
 }
 
@@ -536,6 +582,246 @@ pub async fn dispatch_ready_tasks(
     Ok(executed)
 }
 
+async fn maybe_seed_idle_initiative(state: &AppState) -> Result<bool> {
+    if state.db.count_ready_autonomy_tasks()? > 0
+        || state
+            .db
+            .count_autonomy_tasks_with_status(TaskStatus::Running)?
+            > 0
+    {
+        return Ok(false);
+    }
+    if has_recent_autonomy_activity(state.db.as_ref(), IDLE_INITIATIVE_COOLDOWN_SECS)? {
+        return Ok(false);
+    }
+
+    let health_dedupe_key = "idle_initiative:review_system_health";
+    if system_health_needs_attention(state).await?
+        && !state.db.has_recent_autonomy_task_with_dedupe_key(
+            "review_system_health",
+            health_dedupe_key,
+            IDLE_SYSTEM_HEALTH_TASK_COOLDOWN_SECS,
+        )?
+        && should_schedule_idle_initiative(state.db.as_ref())
+    {
+        let goal_id = state.db.upsert_autonomy_goal(
+            GOAL_AWARENESS,
+            "autonomy",
+            Some("Proactively review runtime health while the queue is idle."),
+            0.72,
+        )?;
+        state.db.create_autonomy_task(
+            Some(goal_id),
+            "review_system_health",
+            "Self-directed system health review",
+            None,
+            &serde_json::json!({
+                "deliver_output": true,
+                "dedupe_key": health_dedupe_key,
+                "source": "idle_initiative",
+            }),
+            Some("Created by idle autonomy initiative to check runtime health and blockers."),
+            0.72,
+            None,
+        )?;
+        tracing::info!("autonomy: seeded idle system health review");
+        return Ok(true);
+    }
+
+    let mentions_dedupe_key = "idle_initiative:check_mentions";
+    if twitter_tool_ready()
+        && !state.db.has_recent_autonomy_task_with_dedupe_key(
+            "check_mentions",
+            mentions_dedupe_key,
+            IDLE_MENTIONS_CHECK_TASK_COOLDOWN_SECS,
+        )?
+        && should_schedule_idle_initiative(state.db.as_ref())
+    {
+        let goal_id = state.db.upsert_autonomy_goal(
+            GOAL_TIMELY_FOLLOW_UP,
+            "autonomy",
+            Some("Check for new mentions or replies when Nyx is otherwise idle."),
+            0.7,
+        )?;
+        state.db.create_autonomy_task(
+            Some(goal_id),
+            "check_mentions",
+            "Self-directed mentions check",
+            None,
+            &serde_json::json!({
+                "count": 10,
+                "deliver_output": true,
+                "dedupe_key": mentions_dedupe_key,
+                "source": "idle_initiative",
+            }),
+            Some("Created by idle autonomy initiative to watch for external mentions."),
+            0.7,
+            None,
+        )?;
+        tracing::info!("autonomy: seeded idle mentions check");
+        return Ok(true);
+    }
+
+    let timeline_dedupe_key = "idle_initiative:review_timeline";
+    if twitter_tool_ready()
+        && !state.db.has_recent_autonomy_task_with_dedupe_key(
+            "review_timeline",
+            timeline_dedupe_key,
+            IDLE_TIMELINE_REVIEW_TASK_COOLDOWN_SECS,
+        )?
+        && should_schedule_idle_initiative(state.db.as_ref())
+    {
+        let goal_id = state.db.upsert_autonomy_goal(
+            GOAL_AWARENESS,
+            "autonomy",
+            Some("Review the twitter timeline and surface anything worth noticing."),
+            0.69,
+        )?;
+        state.db.create_autonomy_task(
+            Some(goal_id),
+            "review_timeline",
+            "Self-directed timeline review",
+            None,
+            &serde_json::json!({
+                "count": 6,
+                "deliver_output": true,
+                "write_note": true,
+                "dedupe_key": timeline_dedupe_key,
+                "source": "idle_initiative",
+            }),
+            Some("Created by idle autonomy initiative to review the latest timeline activity."),
+            0.69,
+            None,
+        )?;
+        tracing::info!("autonomy: seeded idle timeline review");
+        return Ok(true);
+    }
+
+    let brief_dedupe_key = "idle_initiative:review_operator_brief";
+    if !state.db.has_recent_autonomy_task_with_dedupe_key(
+        "review_operator_brief",
+        brief_dedupe_key,
+        IDLE_OPERATOR_REVIEW_TASK_COOLDOWN_SECS,
+    )? && should_schedule_idle_initiative(state.db.as_ref())
+    {
+        let goal_id = state.db.upsert_autonomy_goal(
+            GOAL_PROJECT_TRACKING,
+            "autonomy",
+            Some("Review the current operator brief and surface the sharpest next step."),
+            0.68,
+        )?;
+        state.db.create_autonomy_task(
+            Some(goal_id),
+            "review_operator_brief",
+            "Self-directed operator review",
+            None,
+            &serde_json::json!({
+                "deliver_output": true,
+                "dedupe_key": brief_dedupe_key,
+                "source": "idle_initiative",
+            }),
+            Some("Created by idle autonomy initiative to review what matters now."),
+            0.68,
+            None,
+        )?;
+        tracing::info!("autonomy: seeded idle operator review");
+        return Ok(true);
+    }
+
+    let Some(snapshot) = refresh_project_graph_snapshot(state.db.as_ref(), "autonomy_idle_scan")
+    else {
+        return Ok(false);
+    };
+    let Some(project) = snapshot.projects.first() else {
+        return Ok(false);
+    };
+    let Some(workstream) = project.workstreams.first() else {
+        return Ok(false);
+    };
+    let Some(next_step) = crate::world::follow_up::next_step_hint(&snapshot) else {
+        return Ok(false);
+    };
+
+    let news_query = idle_news_query(Some(project), Some(workstream));
+    let news_dedupe_key = idle_initiative_dedupe_key(&project.id, &workstream.id, &news_query);
+    if web_search_tool_ready()
+        && !state.db.has_recent_autonomy_task_with_dedupe_key(
+            "review_news",
+            &news_dedupe_key,
+            IDLE_NEWS_REVIEW_TASK_COOLDOWN_SECS,
+        )?
+        && should_schedule_idle_initiative(state.db.as_ref())
+    {
+        let goal_id = state.db.upsert_autonomy_goal(
+            GOAL_AWARENESS,
+            "autonomy",
+            Some("Review current external news relevant to Nyx's operating context."),
+            0.67,
+        )?;
+        state.db.create_autonomy_task(
+            Some(goal_id),
+            "review_news",
+            &task_title("Self-directed news review", &news_query),
+            None,
+            &serde_json::json!({
+                "query": news_query,
+                "deliver_output": true,
+                "write_note": true,
+                "dedupe_key": news_dedupe_key,
+                "source": "idle_initiative",
+            }),
+            Some("Created by idle autonomy initiative to scan current external news."),
+            0.67,
+            None,
+        )?;
+        tracing::info!("autonomy: seeded idle news review");
+        return Ok(true);
+    }
+
+    let dedupe_key = idle_initiative_dedupe_key(&project.id, &workstream.id, &next_step);
+    if state.db.has_recent_autonomy_task_with_dedupe_key(
+        "run_tool",
+        &dedupe_key,
+        IDLE_INITIATIVE_TASK_COOLDOWN_SECS,
+    )? || !should_schedule_idle_initiative(state.db.as_ref())
+    {
+        return Ok(false);
+    }
+
+    let goal_id = state.db.upsert_autonomy_goal(
+        GOAL_PROJECT_TRACKING,
+        "autonomy",
+        Some("Proactively ground the next project move when the queue is otherwise idle."),
+        clamp_priority(workstream.priority.max(0.64)),
+    )?;
+    let message_prefix = format!("autonomy initiative ({})", workstream.title);
+    state.db.create_autonomy_task(
+        Some(goal_id),
+        "run_tool",
+        &task_title("Self-directed repo scan", &next_step),
+        Some("git_info"),
+        &serde_json::json!({
+            "action": "status",
+            "deliver_output": true,
+            "message_prefix": message_prefix,
+            "max_output_chars": 280,
+            "initiative_reason": next_step,
+            "project_title": project.title,
+            "workstream_title": workstream.title,
+            "dedupe_key": dedupe_key,
+        }),
+        Some("Created by idle autonomy initiative to ground the next move."),
+        clamp_priority(workstream.priority.max(0.64)),
+        None,
+    )?;
+    tracing::info!(
+        "autonomy: seeded idle initiative for {} / {}",
+        project.title,
+        workstream.title
+    );
+    Ok(true)
+}
+
 async fn recover_stale_running_tasks(state: &AppState) -> Result<usize> {
     let now = chrono::Utc::now();
     let stale_before =
@@ -662,6 +948,149 @@ fn prune_inactive_retry_state(db: &Db) -> Result<usize> {
     Ok(deleted)
 }
 
+fn has_recent_autonomy_activity(db: &Db, within_secs: i64) -> Result<bool> {
+    let Some(action_run) = db.list_recent_autonomy_action_runs(1)?.into_iter().next() else {
+        return Ok(false);
+    };
+    let Some(created_at) = parse_retry_timestamp(&action_run.created_at) else {
+        return Ok(false);
+    };
+    Ok(chrono::Utc::now()
+        .signed_duration_since(created_at)
+        .num_seconds()
+        < within_secs.max(0))
+}
+
+fn twitter_tool_ready() -> bool {
+    crate::tools::builtin_tool_runtime_statuses()
+        .into_iter()
+        .find(|status| status.name == "twitter")
+        .map(|status| status.ready)
+        .unwrap_or(false)
+}
+
+fn web_search_tool_ready() -> bool {
+    crate::tools::builtin_tool_runtime_statuses()
+        .into_iter()
+        .find(|status| status.name == "web_search")
+        .map(|status| status.ready)
+        .unwrap_or(false)
+}
+
+fn idle_news_query(
+    project: Option<&crate::world::projects::ProjectNode>,
+    workstream: Option<&crate::world::projects::ProjectWorkstream>,
+) -> String {
+    let project_title = project
+        .map(|item| item.title.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Nyx");
+    let workstream_title = workstream
+        .map(|item| item.title.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("autonomous operator");
+
+    if project_title.eq_ignore_ascii_case("Nyx") {
+        "autonomous AI agents personal AI assistant tools news".to_string()
+    } else {
+        format!("{} {} news", project_title, workstream_title)
+    }
+}
+
+fn write_autonomy_briefing_note(
+    kind: &str,
+    title: &str,
+    body: &str,
+    metadata: serde_json::Value,
+) -> Result<String> {
+    let operation_id = crate::file_provenance::operation_id();
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let path = Path::new("proof").join("autonomy").join(format!(
+        "{}-{}-{}.md",
+        timestamp,
+        kind,
+        &operation_id[..8]
+    ));
+    let content = format!(
+        "# {}\n\nGenerated at: {}\n\nKind: `{}`\n\n{}\n",
+        title.trim(),
+        chrono::Utc::now().to_rfc3339(),
+        kind,
+        body.trim()
+    );
+    crate::file_provenance::write_text_file_with_provenance(
+        &path,
+        &content,
+        crate::file_provenance::FileMutationProof {
+            actor: "nyx",
+            source: "autonomy.briefing_note",
+            action_kind: "autonomy_note_write",
+            operation_id: Some(operation_id.as_str()),
+            description: Some(title),
+            outcome: "committed",
+            metadata,
+        },
+    )?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+async fn system_health_needs_attention(state: &AppState) -> Result<bool> {
+    let self_model = state.self_model_snapshot().await;
+    if !self_model.runtime.hosted_tool_loop_ready || !self_model.runtime.autonomous_llm_ready {
+        return Ok(true);
+    }
+
+    if crate::forge::count_unhealthy_built_tools(state.db.as_ref())? > 0 {
+        return Ok(true);
+    }
+
+    let stale_running_before = format_retry_timestamp(
+        chrono::Utc::now() - chrono::Duration::seconds(STALE_RUNNING_TASK_TIMEOUT_SECS),
+    );
+    if state
+        .db
+        .count_stale_running_autonomy_tasks(&stale_running_before)?
+        > 0
+    {
+        return Ok(true);
+    }
+
+    if state
+        .db
+        .count_autonomy_action_runs_filtered(None, Some("quarantined"))?
+        > 0
+    {
+        return Ok(true);
+    }
+
+    if state
+        .db
+        .count_autonomy_action_runs_filtered(None, Some("retry_scheduled"))?
+        > 0
+    {
+        return Ok(true);
+    }
+
+    let blocked_builtin_count = crate::tools::builtin_tool_runtime_statuses()
+        .into_iter()
+        .filter(|status| !status.ready)
+        .count();
+    Ok(blocked_builtin_count > 0)
+}
+
+fn idle_initiative_dedupe_key(project_id: &str, workstream_id: &str, next_step: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    project_id.hash(&mut hasher);
+    workstream_id.hash(&mut hasher);
+    next_step.hash(&mut hasher);
+    format!(
+        "idle_initiative:{}:{}:{:016x}",
+        project_id,
+        workstream_id,
+        hasher.finish()
+    )
+}
+
 fn plan_task(
     db: &Db,
     task: &Task,
@@ -678,6 +1107,49 @@ fn plan_task(
                 "timely_follow_up_goal_active={}",
                 self_model.has_active_goal(GOAL_TIMELY_FOLLOW_UP)
             ));
+        }
+        "review_operator_brief" => {
+            planning_notes.push(format!(
+                "project_tracking_goal_active={}",
+                self_model.has_active_goal(GOAL_PROJECT_TRACKING)
+            ));
+            planning_notes.push("operator_review_mode=what_matters_now".to_string());
+        }
+        "review_system_health" => {
+            planning_notes.push(format!(
+                "awareness_goal_active={}",
+                self_model.has_active_goal(GOAL_AWARENESS)
+            ));
+            planning_notes.push(format!(
+                "hosted_tool_loop_ready={}",
+                self_model.runtime.hosted_tool_loop_ready
+            ));
+            planning_notes.push(format!(
+                "autonomous_llm_ready={}",
+                self_model.runtime.autonomous_llm_ready
+            ));
+        }
+        "check_mentions" => {
+            planning_notes.push(format!(
+                "timely_follow_up_goal_active={}",
+                self_model.has_active_goal(GOAL_TIMELY_FOLLOW_UP)
+            ));
+            planning_notes.push(format!("twitter_tool_ready={}", twitter_tool_ready()));
+        }
+        "review_timeline" => {
+            planning_notes.push(format!(
+                "awareness_goal_active={}",
+                self_model.has_active_goal(GOAL_AWARENESS)
+            ));
+            planning_notes.push(format!("twitter_tool_ready={}", twitter_tool_ready()));
+        }
+        "review_news" => {
+            planning_notes.push(format!(
+                "awareness_goal_active={}",
+                self_model.has_active_goal(GOAL_AWARENESS)
+            ));
+            planning_notes.push("news_review_mode=web_search".to_string());
+            planning_notes.push(format!("web_search_tool_ready={}", web_search_tool_ready()));
         }
         "store_memory" => {
             planning_notes.push(format!(
@@ -850,6 +1322,571 @@ async fn execute_task(
                 verification,
                 evidence: serde_json::json!({
                     "queued_message": message,
+                }),
+            })
+        }
+        "review_operator_brief" => {
+            let brief = crate::world::brief::compile_operator_brief(
+                state.db.as_ref(),
+                "autonomy_operator_review",
+            )?;
+            let expected_effect = expected_effect_for_task(task);
+            let summary = format!(
+                "reviewed operator brief: {}",
+                crate::trunc(&brief.what_matters_summary, 100)
+            );
+            let deliver_output = task
+                .args
+                .get("deliver_output")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let delivered = if deliver_output {
+                let message = crate::world::brief::render_status_reply(&brief);
+                let mut queue = proactive_queue.lock().await;
+                queue.push(message.clone());
+                queue.iter().any(|queued| queued == &message)
+            } else {
+                false
+            };
+            let mut checks = vec![
+                "compiled a fresh operator brief".to_string(),
+                format!(
+                    "what matters summary: {}",
+                    crate::trunc(&brief.what_matters_summary, 120)
+                ),
+            ];
+            if deliver_output {
+                if delivered {
+                    checks.push("operator brief reply landed in the proactive queue".to_string());
+                } else {
+                    checks.push(
+                        "operator brief reply was generated but not re-observed in the proactive queue"
+                            .to_string(),
+                    );
+                }
+            }
+            let verification = if deliver_output && !delivered {
+                ActionVerification::failed(
+                    true,
+                    Some(expected_effect),
+                    "operator brief review completed but proactive delivery was not verified",
+                    checks,
+                    None,
+                )
+            } else {
+                ActionVerification::verified(
+                    expected_effect,
+                    "verified operator brief review completion",
+                    checks,
+                )
+            };
+            Ok(TaskExecutionResult {
+                summary,
+                verification,
+                evidence: serde_json::json!({
+                    "what_matters_summary": brief.what_matters_summary,
+                    "operator_next_step": brief.operator_next_step,
+                    "queue_summary": brief.queue_summary,
+                    "status_reply": brief.status_reply,
+                }),
+            })
+        }
+        "review_system_health" => {
+            let snapshot = state.self_model_snapshot().await;
+            let builtin_statuses = crate::tools::builtin_tool_runtime_statuses();
+            let blocked_builtins = builtin_statuses
+                .iter()
+                .filter(|status| !status.ready)
+                .map(|status| {
+                    format!(
+                        "{}{}",
+                        status.name,
+                        status
+                            .issue
+                            .as_deref()
+                            .map(|issue| format!(" ({})", crate::trunc(issue, 80)))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>();
+            let unhealthy_built_tool_count =
+                crate::forge::count_unhealthy_built_tools(state.db.as_ref())?;
+            let stale_running_before = format_retry_timestamp(
+                chrono::Utc::now() - chrono::Duration::seconds(STALE_RUNNING_TASK_TIMEOUT_SECS),
+            );
+            let stale_running_task_count = state
+                .db
+                .count_stale_running_autonomy_tasks(&stale_running_before)?;
+            let quarantine_count = state
+                .db
+                .count_autonomy_action_runs_filtered(None, Some("quarantined"))?;
+            let retry_scheduled_count = state
+                .db
+                .count_autonomy_action_runs_filtered(None, Some("retry_scheduled"))?;
+            let running_task_count = state
+                .db
+                .count_autonomy_tasks_with_status(TaskStatus::Running)?;
+
+            let mut concerns = Vec::new();
+            if !snapshot.runtime.hosted_tool_loop_ready {
+                concerns.push("hosted tool loop is not ready".to_string());
+            }
+            if !snapshot.runtime.autonomous_llm_ready {
+                concerns.push("autonomous LLM lane is not ready".to_string());
+            }
+            if !blocked_builtins.is_empty() {
+                concerns.push(format!(
+                    "{} builtin tool(s) blocked: {}",
+                    blocked_builtins.len(),
+                    blocked_builtins.join(", ")
+                ));
+            }
+            if unhealthy_built_tool_count > 0 {
+                concerns.push(format!(
+                    "{} self-built tool(s) are unhealthy",
+                    unhealthy_built_tool_count
+                ));
+            }
+            if stale_running_task_count > 0 {
+                concerns.push(format!(
+                    "{} stale running autonomy task(s) detected",
+                    stale_running_task_count
+                ));
+            }
+            if quarantine_count > 0 {
+                concerns.push(format!(
+                    "{} autonomy action(s) quarantined",
+                    quarantine_count
+                ));
+            }
+            if retry_scheduled_count > 0 {
+                concerns.push(format!(
+                    "{} autonomy action(s) waiting on retry",
+                    retry_scheduled_count
+                ));
+            }
+
+            let summary = if concerns.is_empty() {
+                "reviewed system health: no immediate concerns".to_string()
+            } else {
+                format!(
+                    "reviewed system health: {} concern(s) surfaced",
+                    concerns.len()
+                )
+            };
+            let deliver_output = task
+                .args
+                .get("deliver_output")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let delivered = if deliver_output && !concerns.is_empty() {
+                let message = format!("system health: {}", concerns.join(" | "));
+                let mut queue = proactive_queue.lock().await;
+                queue.push(message.clone());
+                queue.iter().any(|queued| queued == &message)
+            } else {
+                false
+            };
+
+            let mut checks = vec![format!("running autonomy tasks={}", running_task_count)];
+            if concerns.is_empty() {
+                checks.push("no system-health concerns required escalation".to_string());
+            } else {
+                checks.extend(concerns.iter().cloned());
+            }
+            if deliver_output && !concerns.is_empty() {
+                if delivered {
+                    checks.push("system health summary landed in the proactive queue".to_string());
+                } else {
+                    checks.push(
+                        "system health summary was generated but not re-observed in the proactive queue"
+                            .to_string(),
+                    );
+                }
+            }
+
+            let expected_effect = expected_effect_for_task(task);
+            let verification = if deliver_output && !concerns.is_empty() && !delivered {
+                ActionVerification::failed(
+                    true,
+                    Some(expected_effect),
+                    "system health review completed but proactive delivery was not verified",
+                    checks,
+                    None,
+                )
+            } else {
+                ActionVerification::verified(
+                    expected_effect,
+                    "verified system health review completion",
+                    checks,
+                )
+            };
+
+            Ok(TaskExecutionResult {
+                summary,
+                verification,
+                evidence: serde_json::json!({
+                    "concerns": concerns,
+                    "blocked_builtins": blocked_builtins,
+                    "unhealthy_built_tool_count": unhealthy_built_tool_count,
+                    "stale_running_task_count": stale_running_task_count,
+                    "quarantine_count": quarantine_count,
+                    "retry_scheduled_count": retry_scheduled_count,
+                }),
+            })
+        }
+        "check_mentions" => {
+            let expected_effect = expected_effect_for_task(task);
+            if !twitter_tool_ready() {
+                return Ok(TaskExecutionResult {
+                    summary: "skipped mentions check because twitter is not ready".to_string(),
+                    verification: ActionVerification::verified(
+                        expected_effect,
+                        "mentions check safely no-op'd because twitter is unavailable",
+                        vec!["twitter builtin is currently blocked".to_string()],
+                    ),
+                    evidence: serde_json::json!({
+                        "has_mentions": false,
+                        "count": 0,
+                        "tool_ready": false,
+                    }),
+                });
+            }
+
+            let count = task
+                .args
+                .get("count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(10);
+            let result = crate::tools::run(
+                "twitter",
+                &serde_json::json!({
+                    "action": "mentions",
+                    "count": count,
+                }),
+            )
+            .await?;
+            if result.get("success").and_then(|value| value.as_bool()) == Some(false) {
+                let err = result["error"]
+                    .as_str()
+                    .unwrap_or("twitter mentions failed");
+                return Err(anyhow!("autonomy mentions check failed: {}", err));
+            }
+
+            let items = result
+                .get("items")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let output = result
+                .get("output")
+                .and_then(|value| value.as_str())
+                .unwrap_or("no mentions")
+                .to_string();
+            let has_mentions =
+                !items.is_empty() && !output.trim().eq_ignore_ascii_case("no mentions");
+            let deliver_output = task
+                .args
+                .get("deliver_output")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let delivered = if deliver_output && has_mentions {
+                let message = format!("twitter mentions: {}", crate::trunc(&output, 240));
+                let mut queue = proactive_queue.lock().await;
+                queue.push(message.clone());
+                queue.iter().any(|queued| queued == &message)
+            } else {
+                false
+            };
+            let summary = if has_mentions {
+                format!("checked mentions: {} mention(s) surfaced", items.len())
+            } else {
+                "checked mentions: no new mentions".to_string()
+            };
+            let mut checks = vec![format!("twitter returned {} mention item(s)", items.len())];
+            if has_mentions {
+                checks.push(format!("mentions summary: {}", crate::trunc(&output, 120)));
+            } else {
+                checks.push("no actionable mentions were present".to_string());
+            }
+            if deliver_output && has_mentions {
+                if delivered {
+                    checks.push("mentions summary landed in the proactive queue".to_string());
+                } else {
+                    checks.push(
+                        "mentions summary was generated but not re-observed in the proactive queue"
+                            .to_string(),
+                    );
+                }
+            }
+            let verification = if deliver_output && has_mentions && !delivered {
+                ActionVerification::failed(
+                    true,
+                    Some(expected_effect),
+                    "mentions check succeeded but proactive delivery was not verified",
+                    checks,
+                    None,
+                )
+            } else {
+                ActionVerification::verified(
+                    expected_effect,
+                    "verified mentions check completion",
+                    checks,
+                )
+            };
+            Ok(TaskExecutionResult {
+                summary,
+                verification,
+                evidence: serde_json::json!({
+                    "count": items.len(),
+                    "has_mentions": has_mentions,
+                    "tool_result": result,
+                }),
+            })
+        }
+        "review_timeline" => {
+            let expected_effect = expected_effect_for_task(task);
+            if !twitter_tool_ready() {
+                return Ok(TaskExecutionResult {
+                    summary: "skipped timeline review because twitter is not ready".to_string(),
+                    verification: ActionVerification::verified(
+                        expected_effect,
+                        "timeline review safely no-op'd because twitter is unavailable",
+                        vec!["twitter builtin is currently blocked".to_string()],
+                    ),
+                    evidence: serde_json::json!({
+                        "count": 0,
+                        "tool_ready": false,
+                    }),
+                });
+            }
+
+            let count = task
+                .args
+                .get("count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(5);
+            let result = crate::tools::run(
+                "twitter",
+                &serde_json::json!({
+                    "action": "timeline",
+                    "count": count,
+                }),
+            )
+            .await?;
+            if result.get("success").and_then(|value| value.as_bool()) == Some(false) {
+                let err = result["error"]
+                    .as_str()
+                    .unwrap_or("twitter timeline failed");
+                return Err(anyhow!("autonomy timeline review failed: {}", err));
+            }
+
+            let items = result
+                .get("items")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let output = result
+                .get("output")
+                .and_then(|value| value.as_str())
+                .unwrap_or("empty timeline")
+                .to_string();
+            let has_items =
+                !items.is_empty() && !output.trim().eq_ignore_ascii_case("empty timeline");
+            let deliver_output = task
+                .args
+                .get("deliver_output")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let write_note = task
+                .args
+                .get("write_note")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let delivered = if deliver_output && has_items {
+                let message = format!("twitter timeline: {}", crate::trunc(&output, 240));
+                let mut queue = proactive_queue.lock().await;
+                queue.push(message.clone());
+                queue.iter().any(|queued| queued == &message)
+            } else {
+                false
+            };
+            let note_path = if write_note && has_items {
+                Some(write_autonomy_briefing_note(
+                    "timeline",
+                    "Autonomy Timeline Review",
+                    &format!("Reviewed {} timeline item(s).\n\n{}", items.len(), output),
+                    serde_json::json!({
+                        "task_id": task.id,
+                        "task_kind": task.kind,
+                        "item_count": items.len(),
+                        "source": "twitter_timeline",
+                    }),
+                )?)
+            } else {
+                None
+            };
+            let summary = if has_items {
+                format!("reviewed timeline: {} tweet(s) surfaced", items.len())
+            } else {
+                "reviewed timeline: no visible tweets".to_string()
+            };
+            let mut checks = vec![format!("twitter returned {} timeline item(s)", items.len())];
+            if has_items {
+                checks.push(format!("timeline summary: {}", crate::trunc(&output, 120)));
+            } else {
+                checks.push("timeline returned no visible tweets".to_string());
+            }
+            if deliver_output && has_items {
+                if delivered {
+                    checks.push("timeline summary landed in the proactive queue".to_string());
+                } else {
+                    checks.push(
+                        "timeline summary was generated but not re-observed in the proactive queue"
+                            .to_string(),
+                    );
+                }
+            }
+            if let Some(path) = note_path.as_ref() {
+                checks.push(format!("timeline briefing note written to {}", path));
+            }
+            let verification = if deliver_output && has_items && !delivered {
+                ActionVerification::failed(
+                    true,
+                    Some(expected_effect),
+                    "timeline review succeeded but proactive delivery was not verified",
+                    checks,
+                    None,
+                )
+            } else {
+                ActionVerification::verified(
+                    expected_effect,
+                    "verified timeline review completion",
+                    checks,
+                )
+            };
+            Ok(TaskExecutionResult {
+                summary,
+                verification,
+                evidence: serde_json::json!({
+                    "count": items.len(),
+                    "has_items": has_items,
+                    "note_path": note_path,
+                    "tool_result": result,
+                }),
+            })
+        }
+        "review_news" => {
+            let query = task
+                .args
+                .get("query")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("latest AI agent news");
+            let expected_effect = expected_effect_for_task(task);
+            let result = crate::tools::run(
+                "web_search",
+                &serde_json::json!({
+                    "query": query,
+                }),
+            )
+            .await?;
+            if result.get("success").and_then(|value| value.as_bool()) == Some(false) {
+                let err = result["error"].as_str().unwrap_or("web search failed");
+                return Err(anyhow!("autonomy news review failed: {}", err));
+            }
+
+            let output = result
+                .get("output")
+                .and_then(|value| value.as_str())
+                .unwrap_or("no results")
+                .to_string();
+            let has_results = !output.trim().eq_ignore_ascii_case("no results");
+            let deliver_output = task
+                .args
+                .get("deliver_output")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let write_note = task
+                .args
+                .get("write_note")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let delivered = if deliver_output && has_results {
+                let message = format!(
+                    "news review ({}): {}",
+                    crate::trunc(query, 60),
+                    crate::trunc(&output, 220)
+                );
+                let mut queue = proactive_queue.lock().await;
+                queue.push(message.clone());
+                queue.iter().any(|queued| queued == &message)
+            } else {
+                false
+            };
+            let note_path = if write_note && has_results {
+                Some(write_autonomy_briefing_note(
+                    "news",
+                    "Autonomy News Review",
+                    &format!("Query: {}\n\n{}", query, output),
+                    serde_json::json!({
+                        "task_id": task.id,
+                        "task_kind": task.kind,
+                        "query": query,
+                        "source": "web_search",
+                    }),
+                )?)
+            } else {
+                None
+            };
+            let summary = if has_results {
+                format!("reviewed news for {}: results surfaced", query)
+            } else {
+                format!("reviewed news for {}: no results", query)
+            };
+            let mut checks = vec![format!("web search query: {}", query)];
+            if has_results {
+                checks.push(format!("search summary: {}", crate::trunc(&output, 120)));
+            } else {
+                checks.push("web search returned no results".to_string());
+            }
+            if deliver_output && has_results {
+                if delivered {
+                    checks.push("news summary landed in the proactive queue".to_string());
+                } else {
+                    checks.push(
+                        "news summary was generated but not re-observed in the proactive queue"
+                            .to_string(),
+                    );
+                }
+            }
+            if let Some(path) = note_path.as_ref() {
+                checks.push(format!("news briefing note written to {}", path));
+            }
+            let verification = if deliver_output && has_results && !delivered {
+                ActionVerification::failed(
+                    true,
+                    Some(expected_effect),
+                    "news review succeeded but proactive delivery was not verified",
+                    checks,
+                    None,
+                )
+            } else {
+                ActionVerification::verified(
+                    expected_effect,
+                    "verified news review completion",
+                    checks,
+                )
+            };
+            Ok(TaskExecutionResult {
+                summary,
+                verification,
+                evidence: serde_json::json!({
+                    "query": query,
+                    "has_results": has_results,
+                    "note_path": note_path,
+                    "tool_result": result,
                 }),
             })
         }
@@ -1440,4 +2477,53 @@ fn should_schedule_project_snapshot(db: &Db) -> bool {
 
     db.set_state("autonomy:last_project_snapshot_at", &now.to_string());
     true
+}
+
+fn should_schedule_idle_initiative(db: &Db) -> bool {
+    let now = chrono::Utc::now().timestamp();
+    let last = db
+        .get_state(IDLE_INITIATIVE_STATE_KEY)
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    if now - last < IDLE_INITIATIVE_COOLDOWN_SECS {
+        return false;
+    }
+
+    db.set_state(IDLE_INITIATIVE_STATE_KEY, &now.to_string());
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_autonomy_loop_delay_prefers_fast_drain_after_full_batch() {
+        assert_eq!(
+            next_autonomy_loop_delay(DISPATCH_TASK_BATCH_LIMIT, false),
+            AUTONOMY_BATCH_DRAIN_POLL_SECS
+        );
+        assert_eq!(
+            next_autonomy_loop_delay(1, false),
+            AUTONOMY_ACTIVE_POLL_SECS
+        );
+        assert_eq!(next_autonomy_loop_delay(0, true), AUTONOMY_ACTIVE_POLL_SECS);
+        assert_eq!(next_autonomy_loop_delay(0, false), AUTONOMY_IDLE_POLL_SECS);
+    }
+
+    #[test]
+    fn idle_initiative_dedupe_key_changes_with_context() {
+        let first = idle_initiative_dedupe_key("project", "workstream", "do the next thing");
+        let second = idle_initiative_dedupe_key("project", "workstream", "wait for a trigger");
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn idle_news_query_for_nyx_targets_agent_ecosystem() {
+        assert!(
+            idle_news_query(None, None).contains("autonomous AI agents"),
+            "expected Nyx default news query to target the agent ecosystem"
+        );
+    }
 }

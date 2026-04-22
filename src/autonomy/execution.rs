@@ -38,6 +38,11 @@ fn task_expected_target(task: &Task, trace: &super::TaskTraceRefs) -> Option<Str
             .map(str::to_string)
             .or_else(|| Some("knowledge".to_string())),
         "run_tool" => task.tool.clone(),
+        "review_operator_brief" => Some("operator_brief".to_string()),
+        "review_system_health" => Some("system_health".to_string()),
+        "check_mentions" => Some("twitter".to_string()),
+        "review_timeline" => Some("twitter".to_string()),
+        "review_news" => Some("web_search".to_string()),
         "review_growth" => task
             .args
             .get("growth_event_id")
@@ -68,6 +73,41 @@ pub(super) fn expected_effect_for_task(task: &Task) -> ExpectedEffectContract {
             target,
             detail: "run the tool and capture observable runtime output".to_string(),
             verification_method: "tool_runtime_success_payload".to_string(),
+        },
+        "review_operator_brief" => ExpectedEffectContract {
+            kind: "operator_brief_review".to_string(),
+            target,
+            detail: "review the current operator brief and surface the most relevant next step"
+                .to_string(),
+            verification_method: "operator_brief_snapshot".to_string(),
+        },
+        "review_system_health" => ExpectedEffectContract {
+            kind: "system_health_review".to_string(),
+            target,
+            detail: "review runtime health and summarize concrete concerns when present"
+                .to_string(),
+            verification_method: "system_health_snapshot".to_string(),
+        },
+        "check_mentions" => ExpectedEffectContract {
+            kind: "mentions_check".to_string(),
+            target,
+            detail: "check mentions and surface them only when something actionable appears"
+                .to_string(),
+            verification_method: "twitter_mentions_payload".to_string(),
+        },
+        "review_timeline" => ExpectedEffectContract {
+            kind: "timeline_review".to_string(),
+            target,
+            detail: "review the twitter timeline and summarize the latest visible activity"
+                .to_string(),
+            verification_method: "twitter_timeline_payload".to_string(),
+        },
+        "review_news" => ExpectedEffectContract {
+            kind: "news_review".to_string(),
+            target,
+            detail: "read current web news results for a query and summarize what surfaced"
+                .to_string(),
+            verification_method: "web_search_results_payload".to_string(),
         },
         "reconcile_self_model" => ExpectedEffectContract {
             kind: "self_model_alignment".to_string(),
