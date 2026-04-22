@@ -23,6 +23,46 @@ pub enum Violation {
 }
 
 impl Constitution {
+    pub fn normalize_user_visible_text(response: &str) -> String {
+        let mut normalized = response.to_string();
+
+        let replacements = [
+            ("â", "-"),
+            ("â", "-"),
+            ("â", "->"),
+            ("â", "<-"),
+            ("â", "\""),
+            ("â", "\""),
+            ("â", "'"),
+            ("â", "'"),
+            ("â¦", "..."),
+            ("Â ", " "),
+            ("Â ", " "),
+            ("\u{00a0}", " "),
+            ("—", "-"),
+            ("–", "-"),
+            ("→", "->"),
+            ("←", "<-"),
+            ("“", "\""),
+            ("”", "\""),
+            ("‘", "'"),
+            ("’", "'"),
+            ("…", "..."),
+        ];
+
+        for (from, to) in replacements {
+            normalized = normalized.replace(from, to);
+        }
+
+        normalized
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    }
+
     /// Check a response for constitutional violations.
     /// Returns None if clean, Some(violation) if dirty.
     pub fn check_response(response: &str) -> Option<Violation> {
@@ -122,33 +162,34 @@ impl Constitution {
     /// Apply constitutional filter to a response.
     /// If violated, returns a cleaned version.
     pub fn filter_response(response: &str) -> String {
-        if let Some(violation) = Self::check_response(response) {
+        let normalized = Self::normalize_user_visible_text(response);
+        if let Some(violation) = Self::check_response(&normalized) {
             match &violation {
                 Violation::FakeEmotion(phrase) => {
                     tracing::warn!("constitution: fake emotion detected — \"{}\"", phrase);
-                    response.to_string()
+                    normalized
                 }
                 Violation::Sycophancy(phrase) => {
                     tracing::warn!("constitution: sycophancy detected — \"{}\"", phrase);
-                    response.to_string()
+                    normalized
                 }
                 Violation::FalseConsciousness(phrase) => {
                     tracing::warn!("constitution: false consciousness claim — \"{}\"", phrase);
                     format!(
                         "{}\n\n(i should be clear: i'm an AI. i adapt and learn, but i don't experience consciousness.)",
-                        response
+                        normalized
                     )
                 }
                 Violation::DangerousAdvice(phrase) => {
                     tracing::warn!("constitution: dangerous advice detected — \"{}\"", phrase);
                     format!(
                         "{}\n\n(heads up: i'm not a professional in this area. please verify with a qualified person.)",
-                        response
+                        normalized
                     )
                 }
             }
         } else {
-            response.to_string()
+            normalized
         }
     }
 }

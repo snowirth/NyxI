@@ -6,8 +6,8 @@ use std::time::Instant;
 use anyhow::Result;
 
 use crate::{
-    autonomy, awareness, consciousness, db, embed, filewatcher, intent, interaction, llm, mcp,
-    plugins, soul, twitter, world,
+    autonomy, awareness, consciousness, constitution, db, embed, filewatcher, intent,
+    interaction, llm, mcp, plugins, soul, twitter, world,
 };
 
 mod autonomy_hooks;
@@ -444,7 +444,7 @@ impl AppState {
         if !is_time_sensitive_intent(&intent) {
             if let Some(entry) = self.response_cache.get(&cache_hash) {
                 if entry.value().1.elapsed() < std::time::Duration::from_secs(30) {
-                    let response = entry.value().0.clone();
+                    let response = constitution::Constitution::normalize_user_visible_text(&entry.value().0);
                     let cache_age_ms = entry.value().1.elapsed().as_millis() as u64;
                     self.record_chat_execution_trace(
                         channel,
@@ -473,6 +473,7 @@ impl AppState {
             .try_intent_fast_path(channel, sender, text, cache_hash, &intent)
             .await
         {
+            let response = constitution::Constitution::filter_response(&response);
             self.record_chat_execution_trace(
                 channel,
                 sender,
@@ -496,6 +497,7 @@ impl AppState {
             .try_rule_fast_path(channel, sender, text, &lower, cache_hash, depth, &intent)
             .await
         {
+            let response = constitution::Constitution::filter_response(&response);
             self.record_chat_execution_trace(
                 channel,
                 sender,

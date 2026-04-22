@@ -531,11 +531,12 @@ impl AppState {
         response: &str,
         cache_hash: u64,
     ) {
+        let response = crate::constitution::Constitution::normalize_user_visible_text(response);
         self.db.store_message(channel, "user", user_msg);
-        self.db.store_message(channel, "assistant", response);
+        self.db.store_message(channel, "assistant", &response);
         self.db.set_state(&format!("compressed:{}", channel), "");
         self.response_cache
-            .insert(cache_hash, (response.to_string(), Instant::now()));
+            .insert(cache_hash, (response.clone(), Instant::now()));
         self.response_cache
             .retain(|_, (_, created_at)| created_at.elapsed() < std::time::Duration::from_secs(60));
 
